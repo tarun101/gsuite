@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.cjs
+*.cjs.bak-*
+.DS_Store
+client_secret*.json
+credentials*.json
+tokens/
+config.json
+scheduled-sends.json
+scheduled-sends.lock
+*.state.json
+correspondents-*.json
+imessage-correspondents.json
+whatsapp-chats.json
+*.xlsx

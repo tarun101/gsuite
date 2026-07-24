@@ -20,6 +20,9 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/documents',
+  'https://www.googleapis.com/auth/chat.spaces.readonly',
+  'https://www.googleapis.com/auth/chat.messages',
+  'https://www.googleapis.com/auth/chat.memberships.readonly',
 ];
 const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -87,7 +90,7 @@ export async function authorizeAccount(
       const code = url.searchParams.get('code');
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(
-        '<html><body style="font-family:sans-serif;margin:40px"><h2>gmail-mcp</h2><p>' +
+        '<html><body style="font-family:sans-serif;margin:40px"><h2>gsuite-mcp</h2><p>' +
           (code ? 'Authorized. You can close this tab.' : `Authorization failed: ${error ?? 'unknown error'}`) +
           '</p></body></html>'
       );

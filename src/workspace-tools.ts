@@ -65,6 +65,13 @@ function documentId(input: string): string {
   throw new Error('document must be a Google Docs URL or document ID.');
 }
 
+const DRIVE_AUDIT_FILE_FIELDS =
+  'id,name,mimeType,modifiedTime,modifiedByMeTime,createdTime,viewedByMeTime,sharedWithMeTime,' +
+  'size,trashed,parents,driveId,description,webViewLink,resourceKey,permissionIds,' +
+  'hasAugmentedPermissions,inheritedPermissionsDisabled,' +
+  'owners(displayName,emailAddress,me),lastModifyingUser(displayName,emailAddress,me),' +
+  'capabilities(canComment,canEdit,canShare)';
+
 function documentText(content: any[] | undefined): string {
   const output: string[] = [];
   const walk = (elements: any[] | undefined) => {
@@ -245,8 +252,7 @@ export function registerWorkspaceTools(server: McpServer): void {
           pageSize: args.pageSize ?? 25,
           pageToken: args.pageToken,
           orderBy: 'modifiedTime desc',
-          fields:
-            'nextPageToken,files(id,name,mimeType,modifiedTime,createdTime,size,trashed,parents,webViewLink,owners(displayName,emailAddress))',
+          fields: `nextPageToken,files(${DRIVE_AUDIT_FILE_FIELDS})`,
         })
       );
       return {
@@ -269,8 +275,7 @@ export function registerWorkspaceTools(server: McpServer): void {
       const result = await callGoogle(ctx, 'get Drive file', () =>
         ctx.drive.files.get({
           fileId: args.fileId,
-          fields:
-            'id,name,mimeType,modifiedTime,createdTime,size,trashed,parents,webViewLink,owners(displayName,emailAddress)',
+          fields: DRIVE_AUDIT_FILE_FIELDS,
         })
       );
       return { account: ctx.alias, email: ctx.email, ...result.data };

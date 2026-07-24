@@ -6,9 +6,10 @@ A local-first MCP server for operating multiple Google Workspace accounts throug
 
 - **Gmail:** search/read threads and messages; drafts; HTML and attachments; send; scheduled drafts; labels; archive; recoverable Trash.
 - **Sheets:** metadata, range reads, exact range updates, and row append.
-- **Drive:** search, metadata, download/export, folders, rename, move, and recoverable Trash.
+- **Drive:** search, metadata, download/export, folders, rename, move, recoverable Trash, durable change tokens, historical activity, comments/replies, mentions/assignments, permissions/ownership, and pending access proposals.
 - **Calendar:** calendar/event reads plus event create, update, and delete.
-- **Docs:** plain-text read, create, append, and replace-all.
+- **Docs:** plain-text read, create, append, replace-all, and read-only unresolved-suggestion extraction across document tabs.
+- **Google Chat:** joined-space and direct-message discovery, messages, attachments, members, reactions, send/reply, edit, and named-message deletion.
 
 Every service tool requires an `account` alias or exact email. Each account can use a different Desktop OAuth client when Workspace organization policies require it.
 
@@ -16,7 +17,7 @@ The Gmail foundation is based on [Vinksj/claude-gmail-multi](https://github.com/
 
 ## Install
 
-Requires Node.js 20 or newer. Enable the Gmail, Sheets, Drive, Calendar, and Docs APIs in your Google Cloud project.
+Requires Node.js 20 or newer. Enable the Gmail, Sheets, Drive, Drive Activity, Calendar, Docs, and Google Chat APIs in your Google Cloud project.
 
 ```bash
 npm install
@@ -58,12 +59,14 @@ Scheduling authorizes the later send. The MCP process checks every 30 seconds. I
 
 - Account selection is mandatory and results echo the authenticated account.
 - Gmail and Drive expose recoverable Trash, never permanent deletion.
-- Sharing, forwarding, permissions, and Workspace administration are not exposed.
+- Drive permissions, pending access proposals, comments, replies, activity, and suggestions are read-only. Sharing/ownership changes, access-request resolution, comment/reply posting, forwarding, and Workspace administration are not exposed.
+- Chat does not expose global/admin search, space creation/deletion, membership mutation, history settings, or Developer Preview methods.
+- Chat sends, edits, reactions, and deletions require explicit user approval; message deletion is permanent.
 - Mutating and external tools carry MCP safety annotations.
 - Scheduled-send processing uses a cross-process lock.
 - OAuth clients, tokens, schedule state, downloaded data, and generated account exports are excluded by `.gitignore`.
 
-The OAuth scopes are `gmail.modify`, `spreadsheets`, `drive`, `calendar`, and `documents`. These are powerful scopes intended for self-hosted use; review the tool surface before authorizing an agent.
+The OAuth scopes are `gmail.modify`, `spreadsheets`, `drive`, `drive.activity.readonly`, `calendar`, `documents`, `chat.spaces.readonly`, `chat.messages`, and `chat.memberships.readonly`. Adding Drive Activity or Chat to an existing installation requires reauthorizing each account. Google classifies `chat.messages` as restricted; a Workspace administrator might need to trust the OAuth client, and public deployments can require Google verification. These are powerful scopes intended for self-hosted use; review the tool surface before authorizing an agent.
 
 ## Related MCPs
 

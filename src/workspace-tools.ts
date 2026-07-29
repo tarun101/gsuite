@@ -583,6 +583,68 @@ export function registerWorkspaceTools(server: McpServer): void {
 
   register(
     server,
+    'calendar_respond_to_event',
+    'Accept, decline, or tentatively accept a calendar invitation for the selected account without changing other attendees or event details.',
+    {
+      account,
+      calendarId,
+      eventId: z.string(),
+      responseStatus: z.enum(['accepted', 'declined', 'tentative']),
+      sendUpdates: z.enum(['all', 'externalOnly', 'none']).optional(),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const selectedCalendarId = args.calendarId ?? 'primary';
+      const current = await callGoogle(ctx, 'get calendar invitation', () =>
+        ctx.calendar.events.get({
+          calendarId: selectedCalendarId,
+          eventId: args.eventId,
+          fields: 'id,summary,start,end,htmlLink,organizer,attendees',
+        })
+      );
+      const self = (current.data.attendees ?? []).find(
+        (attendee) => attendee.self || attendee.email?.toLowerCase() === ctx.email.toLowerCase()
+      );
+      if (!self?.email) {
+        throw new Error(
+          `The selected account ${ctx.email} is not an attendee on event ${args.eventId}; no RSVP was changed.`
+        );
+      }
+
+      const previousResponseStatus = self.responseStatus;
+      const result = await callGoogle(ctx, 'respond to calendar invitation', () =>
+        ctx.calendar.events.patch({
+          calendarId: selectedCalendarId,
+          eventId: args.eventId,
+          sendUpdates: args.sendUpdates ?? 'all',
+          requestBody: {
+            attendeesOmitted: true,
+            attendees: [{ email: self.email, responseStatus: args.responseStatus }],
+          },
+        })
+      );
+      const updatedSelf = (result.data.attendees ?? []).find(
+        (attendee) => attendee.self || attendee.email?.toLowerCase() === ctx.email.toLowerCase()
+      );
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        calendarId: selectedCalendarId,
+        eventId: result.data.id,
+        summary: result.data.summary,
+        start: result.data.start,
+        end: result.data.end,
+        organizer: result.data.organizer,
+        previousResponseStatus,
+        responseStatus: updatedSelf?.responseStatus ?? args.responseStatus,
+        htmlLink: result.data.htmlLink,
+      };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  );
+
+  register(
+    server,
     'calendar_delete_event',
     'Delete one calendar event.',
     {

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
+import { buildRsvpPatchBody, findSelfAttendee } from './calendar-rsvp.js';
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 type ToolAnnotations = {
@@ -602,14 +603,13 @@ export function registerWorkspaceTools(server: McpServer): void {
           fields: 'id,summary,start,end,htmlLink,organizer,attendees',
         })
       );
-      const self = (current.data.attendees ?? []).find(
-        (attendee) => attendee.self || attendee.email?.toLowerCase() === ctx.email.toLowerCase()
-      );
+      const self = findSelfAttendee(current.data.attendees, ctx.email);
       if (!self?.email) {
         throw new Error(
           `The selected account ${ctx.email} is not an attendee on event ${args.eventId}; no RSVP was changed.`
         );
       }
+      const selfEmail = self.email;
 
       const previousResponseStatus = self.responseStatus;
       const result = await callGoogle(ctx, 'respond to calendar invitation', () =>
@@ -617,15 +617,10 @@ export function registerWorkspaceTools(server: McpServer): void {
           calendarId: selectedCalendarId,
           eventId: args.eventId,
           sendUpdates: args.sendUpdates ?? 'all',
-          requestBody: {
-            attendeesOmitted: true,
-            attendees: [{ email: self.email, responseStatus: args.responseStatus }],
-          },
+          requestBody: buildRsvpPatchBody(selfEmail, args.responseStatus),
         })
       );
-      const updatedSelf = (result.data.attendees ?? []).find(
-        (attendee) => attendee.self || attendee.email?.toLowerCase() === ctx.email.toLowerCase()
-      );
+      const updatedSelf = findSelfAttendee(result.data.attendees, ctx.email);
       return {
         account: ctx.alias,
         email: ctx.email,

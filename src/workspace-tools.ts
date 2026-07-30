@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
+import { mimeTypeForFilename, resolveUploadSource } from './drive-upload.js';
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 type ToolAnnotations = {
@@ -335,6 +337,59 @@ export function registerWorkspaceTools(server: McpServer): void {
       return { account: ctx.alias, email: ctx.email, ...result.data };
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
+  );
+
+  register(
+    server,
+    'drive_upload_file',
+    'Upload a local file (or inline base64 content) to Google Drive.',
+    {
+      account,
+      filename: z.string().describe('Name for the file in Drive, e.g. "report.pdf".'),
+      path: z
+        .string()
+        .optional()
+        .describe('Absolute local file path to upload (read from disk on the machine running this server). Use this OR content.'),
+      content: z
+        .string()
+        .optional()
+        .describe('Base64-encoded file content. Use this OR path, not both.'),
+      mimeType: z
+        .string()
+        .optional()
+        .describe('MIME type, e.g. "application/pdf". Inferred from the filename when omitted.'),
+      parentId: z
+        .string()
+        .optional()
+        .describe('Destination folder ID; defaults to the account\'s My Drive root.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const source = resolveUploadSource({ path: args.path, content: args.content });
+      let body: Readable;
+      if (source === 'path') {
+        const filePath = args.path as string;
+        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+          throw new Error(`No readable file at path: ${filePath}`);
+        }
+        body = fs.createReadStream(filePath);
+      } else {
+        body = Readable.from(Buffer.from(args.content as string, 'base64'));
+      }
+      const mimeType = args.mimeType ?? mimeTypeForFilename(args.filename);
+      const result = await callGoogle(ctx, 'upload Drive file', () =>
+        ctx.drive.files.create({
+          requestBody: {
+            name: args.filename,
+            ...(args.parentId ? { parents: [args.parentId] } : {}),
+          },
+          media: { mimeType, body },
+          fields: 'id,name,mimeType,size,parents,webViewLink',
+        })
+      );
+      return { account: ctx.alias, email: ctx.email, ...result.data };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   );
 
   register(

@@ -6,7 +6,7 @@ A local-first MCP server for operating multiple Google Workspace accounts throug
 
 - **Gmail:** search/read threads and messages; drafts; HTML and attachments; send; scheduled drafts; labels; archive; recoverable Trash.
 - **Sheets:** metadata, range reads, exact range updates, and row append.
-- **Drive:** search, metadata, download/export, folders, rename, move, and recoverable Trash.
+- **Drive:** search, metadata, download/export, upload, folders, rename, move, and recoverable Trash.
 - **Calendar:** calendar/event reads plus event create, update, and delete.
 - **Docs:** plain-text read, create, append, and replace-all.
 

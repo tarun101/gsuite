@@ -6,8 +6,8 @@ A local-first MCP server for operating multiple Google Workspace accounts throug
 
 - **Gmail:** search/read threads and messages; drafts; HTML and attachments; send; scheduled drafts; labels; archive; recoverable Trash.
 - **Sheets:** metadata, range reads, exact range updates, and row append.
-- **Drive:** search, metadata, download/export, folders, rename, move, and recoverable Trash.
-- **Calendar:** calendar/event reads plus event create, update, RSVP, and delete.
+- **Drive:** search, metadata, download/export, upload, folders, rename, move, and recoverable Trash.
+- **Calendar:** calendar/event reads plus event create (with optional Google Meet), update, RSVP, and delete.
 - **Docs:** plain-text read, create, append, and replace-all.
 
 Every service tool requires an `account` alias or exact email. Each account can use a different Desktop OAuth client when Workspace organization policies require it.

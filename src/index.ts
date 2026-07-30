@@ -5,7 +5,7 @@ import { startScheduledSendWorker } from './scheduler.js';
 import { registerWorkspaceTools } from './workspace-tools.js';
 
 // stdout is the JSON-RPC channel — all diagnostics must go to stderr (console.error).
-const server = new McpServer({ name: 'gsuite', version: '0.3.1' });
+const server = new McpServer({ name: 'gsuite', version: '0.4.0' });
 registerTools(server);
 registerWorkspaceTools(server);
 startScheduledSendWorker();

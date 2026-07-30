@@ -28,6 +28,7 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'sheets_update_range',
       'drive_search_files',
       'drive_trash_file',
+      'drive_upload_file',
       'calendar_list_events',
       'calendar_create_event',
       'calendar_respond_to_event',
@@ -63,6 +64,16 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     assert.ok(calendarRespond.inputSchema.required.includes('account'));
     assert.ok(calendarRespond.inputSchema.required.includes('eventId'));
     assert.ok(calendarRespond.inputSchema.required.includes('responseStatus'));
+
+    const createEvent = tools.find((tool) => tool.name === 'calendar_create_event');
+    assert.equal(createEvent.inputSchema.properties.addGoogleMeet.type, 'boolean');
+    assert.ok(!(createEvent.inputSchema.required ?? []).includes('addGoogleMeet'));
+
+    const driveUpload = tools.find((tool) => tool.name === 'drive_upload_file');
+    assert.equal(driveUpload.annotations?.readOnlyHint, false);
+    assert.ok(driveUpload.inputSchema.required.includes('filename'));
+    assert.equal(driveUpload.inputSchema.properties.path.type, 'string');
+    assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
   } finally {
     await client.close();
     fs.rmSync(stateDir, { recursive: true, force: true });

@@ -1,11 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
 import { buildRsvpPatchBody, findSelfAttendee } from './calendar-rsvp.js';
+import { mimeTypeForFilename, resolveUploadSource } from './drive-upload.js';
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 type ToolAnnotations = {
@@ -340,6 +343,59 @@ export function registerWorkspaceTools(server: McpServer): void {
 
   register(
     server,
+    'drive_upload_file',
+    'Upload a local file (or inline base64 content) to Google Drive.',
+    {
+      account,
+      filename: z.string().describe('Name for the file in Drive, e.g. "report.pdf".'),
+      path: z
+        .string()
+        .optional()
+        .describe('Absolute local file path to upload (read from disk on the machine running this server). Use this OR content.'),
+      content: z
+        .string()
+        .optional()
+        .describe('Base64-encoded file content. Use this OR path, not both.'),
+      mimeType: z
+        .string()
+        .optional()
+        .describe('MIME type, e.g. "application/pdf". Inferred from the filename when omitted.'),
+      parentId: z
+        .string()
+        .optional()
+        .describe('Destination folder ID; defaults to the account\'s My Drive root.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const source = resolveUploadSource({ path: args.path, content: args.content });
+      let body: Readable;
+      if (source === 'path') {
+        const filePath = args.path as string;
+        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+          throw new Error(`No readable file at path: ${filePath}`);
+        }
+        body = fs.createReadStream(filePath);
+      } else {
+        body = Readable.from(Buffer.from(args.content as string, 'base64'));
+      }
+      const mimeType = args.mimeType ?? mimeTypeForFilename(args.filename);
+      const result = await callGoogle(ctx, 'upload Drive file', () =>
+        ctx.drive.files.create({
+          requestBody: {
+            name: args.filename,
+            ...(args.parentId ? { parents: [args.parentId] } : {}),
+          },
+          media: { mimeType, body },
+          fields: 'id,name,mimeType,size,parents,webViewLink',
+        })
+      );
+      return { account: ctx.alias, email: ctx.email, ...result.data };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  );
+
+  register(
+    server,
     'drive_rename_file',
     'Rename a Google Drive file or folder.',
     { account, fileId: z.string(), name: z.string() },
@@ -489,7 +545,7 @@ export function registerWorkspaceTools(server: McpServer): void {
   register(
     server,
     'calendar_create_event',
-    'Create a timed or all-day calendar event.',
+    'Create a timed or all-day calendar event, optionally with a Google Meet video conference.',
     {
       account,
       calendarId,
@@ -500,6 +556,10 @@ export function registerWorkspaceTools(server: McpServer): void {
       description: z.string().optional(),
       location: z.string().optional(),
       attendees: z.array(z.string().email()).optional(),
+      addGoogleMeet: z
+        .boolean()
+        .optional()
+        .describe('If true, attach a Google Meet video conference and return its join link.'),
       sendUpdates: z.enum(['all', 'externalOnly', 'none']).optional(),
     },
     async (args) => {
@@ -508,6 +568,8 @@ export function registerWorkspaceTools(server: McpServer): void {
         ctx.calendar.events.insert({
           calendarId: args.calendarId ?? 'primary',
           sendUpdates: args.sendUpdates ?? 'none',
+          // conferenceDataVersion must be 1 for the API to honor a Meet createRequest.
+          conferenceDataVersion: args.addGoogleMeet ? 1 : undefined,
           requestBody: {
             summary: args.summary,
             start: eventTime(args.start, args.timeZone),
@@ -515,9 +577,24 @@ export function registerWorkspaceTools(server: McpServer): void {
             description: args.description,
             location: args.location,
             attendees: args.attendees?.map((email: string) => ({ email })),
+            ...(args.addGoogleMeet
+              ? {
+                  conferenceData: {
+                    createRequest: {
+                      // requestId must be unique per create call; Google dedupes retries by it.
+                      requestId: randomUUID(),
+                      conferenceSolutionKey: { type: 'hangoutsMeet' },
+                    },
+                  },
+                }
+              : {}),
           },
         })
       );
+      const meetLink =
+        result.data.hangoutLink ??
+        result.data.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')?.uri ??
+        undefined;
       return {
         account: ctx.alias,
         email: ctx.email,
@@ -526,6 +603,15 @@ export function registerWorkspaceTools(server: McpServer): void {
         start: result.data.start,
         end: result.data.end,
         htmlLink: result.data.htmlLink,
+        ...(args.addGoogleMeet
+          ? {
+              meetLink,
+              // 'success' | 'pending' | 'failure' — pending means Meet is still provisioning.
+              conferenceStatus:
+                result.data.conferenceData?.createRequest?.status?.statusCode ??
+                (meetLink ? 'success' : 'pending'),
+            }
+          : {}),
       };
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }

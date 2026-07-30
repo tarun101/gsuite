@@ -1,6 +1,6 @@
 {
   "name": "gsuite-mcp",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Local-first multi-account Gmail, Sheets, Drive, Calendar, and Docs MCP server.",
   "type": "module",
   "license": "MIT",

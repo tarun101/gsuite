@@ -31,6 +31,7 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'drive_upload_file',
       'calendar_list_events',
       'calendar_create_event',
+      'calendar_respond_to_event',
       'docs_get_document',
       'docs_replace_text',
     ]) {
@@ -49,6 +50,20 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
 
     const driveRead = tools.find((tool) => tool.name === 'drive_search_files');
     assert.equal(driveRead.annotations?.readOnlyHint, true);
+
+    const calendarRespond = tools.find((tool) => tool.name === 'calendar_respond_to_event');
+    assert.equal(calendarRespond.annotations?.readOnlyHint, false);
+    assert.equal(calendarRespond.annotations?.destructiveHint, false);
+    assert.equal(calendarRespond.annotations?.idempotentHint, true);
+    assert.equal(calendarRespond.annotations?.openWorldHint, true);
+    assert.deepEqual(calendarRespond.inputSchema.properties.responseStatus.enum, [
+      'accepted',
+      'declined',
+      'tentative',
+    ]);
+    assert.ok(calendarRespond.inputSchema.required.includes('account'));
+    assert.ok(calendarRespond.inputSchema.required.includes('eventId'));
+    assert.ok(calendarRespond.inputSchema.required.includes('responseStatus'));
 
     const createEvent = tools.find((tool) => tool.name === 'calendar_create_event');
     assert.equal(createEvent.inputSchema.properties.addGoogleMeet.type, 'boolean');

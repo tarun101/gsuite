@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
+import { buildRsvpPatchBody, findSelfAttendee } from './calendar-rsvp.js';
 import { mimeTypeForFilename, resolveUploadSource } from './drive-upload.js';
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
@@ -665,6 +666,62 @@ export function registerWorkspaceTools(server: McpServer): void {
       };
     },
     { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true }
+  );
+
+  register(
+    server,
+    'calendar_respond_to_event',
+    'Accept, decline, or tentatively accept a calendar invitation for the selected account without changing other attendees or event details.',
+    {
+      account,
+      calendarId,
+      eventId: z.string(),
+      responseStatus: z.enum(['accepted', 'declined', 'tentative']),
+      sendUpdates: z.enum(['all', 'externalOnly', 'none']).optional(),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const selectedCalendarId = args.calendarId ?? 'primary';
+      const current = await callGoogle(ctx, 'get calendar invitation', () =>
+        ctx.calendar.events.get({
+          calendarId: selectedCalendarId,
+          eventId: args.eventId,
+          fields: 'id,summary,start,end,htmlLink,organizer,attendees',
+        })
+      );
+      const self = findSelfAttendee(current.data.attendees, ctx.email);
+      if (!self?.email) {
+        throw new Error(
+          `The selected account ${ctx.email} is not an attendee on event ${args.eventId}; no RSVP was changed.`
+        );
+      }
+      const selfEmail = self.email;
+
+      const previousResponseStatus = self.responseStatus;
+      const result = await callGoogle(ctx, 'respond to calendar invitation', () =>
+        ctx.calendar.events.patch({
+          calendarId: selectedCalendarId,
+          eventId: args.eventId,
+          sendUpdates: args.sendUpdates ?? 'all',
+          requestBody: buildRsvpPatchBody(selfEmail, args.responseStatus),
+        })
+      );
+      const updatedSelf = findSelfAttendee(result.data.attendees, ctx.email);
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        calendarId: selectedCalendarId,
+        eventId: result.data.id,
+        summary: result.data.summary,
+        start: result.data.start,
+        end: result.data.end,
+        organizer: result.data.organizer,
+        previousResponseStatus,
+        responseStatus: updatedSelf?.responseStatus ?? args.responseStatus,
+        htmlLink: result.data.htmlLink,
+      };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
   );
 
   register(

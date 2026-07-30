@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { callGmail } from './gmail.js';
@@ -488,7 +489,7 @@ export function registerWorkspaceTools(server: McpServer): void {
   register(
     server,
     'calendar_create_event',
-    'Create a timed or all-day calendar event.',
+    'Create a timed or all-day calendar event, optionally with a Google Meet video conference.',
     {
       account,
       calendarId,
@@ -499,6 +500,10 @@ export function registerWorkspaceTools(server: McpServer): void {
       description: z.string().optional(),
       location: z.string().optional(),
       attendees: z.array(z.string().email()).optional(),
+      addGoogleMeet: z
+        .boolean()
+        .optional()
+        .describe('If true, attach a Google Meet video conference and return its join link.'),
       sendUpdates: z.enum(['all', 'externalOnly', 'none']).optional(),
     },
     async (args) => {
@@ -507,6 +512,8 @@ export function registerWorkspaceTools(server: McpServer): void {
         ctx.calendar.events.insert({
           calendarId: args.calendarId ?? 'primary',
           sendUpdates: args.sendUpdates ?? 'none',
+          // conferenceDataVersion must be 1 for the API to honor a Meet createRequest.
+          conferenceDataVersion: args.addGoogleMeet ? 1 : undefined,
           requestBody: {
             summary: args.summary,
             start: eventTime(args.start, args.timeZone),
@@ -514,9 +521,24 @@ export function registerWorkspaceTools(server: McpServer): void {
             description: args.description,
             location: args.location,
             attendees: args.attendees?.map((email: string) => ({ email })),
+            ...(args.addGoogleMeet
+              ? {
+                  conferenceData: {
+                    createRequest: {
+                      // requestId must be unique per create call; Google dedupes retries by it.
+                      requestId: randomUUID(),
+                      conferenceSolutionKey: { type: 'hangoutsMeet' },
+                    },
+                  },
+                }
+              : {}),
           },
         })
       );
+      const meetLink =
+        result.data.hangoutLink ??
+        result.data.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')?.uri ??
+        undefined;
       return {
         account: ctx.alias,
         email: ctx.email,
@@ -525,6 +547,15 @@ export function registerWorkspaceTools(server: McpServer): void {
         start: result.data.start,
         end: result.data.end,
         htmlLink: result.data.htmlLink,
+        ...(args.addGoogleMeet
+          ? {
+              meetLink,
+              // 'success' | 'pending' | 'failure' — pending means Meet is still provisioning.
+              conferenceStatus:
+                result.data.conferenceData?.createRequest?.status?.statusCode ??
+                (meetLink ? 'success' : 'pending'),
+            }
+          : {}),
       };
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }

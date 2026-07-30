@@ -48,6 +48,10 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
 
     const driveRead = tools.find((tool) => tool.name === 'drive_search_files');
     assert.equal(driveRead.annotations?.readOnlyHint, true);
+
+    const createEvent = tools.find((tool) => tool.name === 'calendar_create_event');
+    assert.equal(createEvent.inputSchema.properties.addGoogleMeet.type, 'boolean');
+    assert.ok(!(createEvent.inputSchema.required ?? []).includes('addGoogleMeet'));
   } finally {
     await client.close();
     fs.rmSync(stateDir, { recursive: true, force: true });

@@ -9,6 +9,7 @@ import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
 import { buildRsvpPatchBody, findSelfAttendee } from './calendar-rsvp.js';
 import { mimeTypeForFilename, resolveUploadSource } from './drive-upload.js';
+import { aggregateAvailability, chunkCalendarIds, type CalendarFreeBusy } from './calendar-availability.js';
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 type ToolAnnotations = {
@@ -68,6 +69,13 @@ function documentId(input: string): string {
   if (/^[a-zA-Z0-9_-]{20,}$/.test(input)) return input;
   throw new Error('document must be a Google Docs URL or document ID.');
 }
+
+const DRIVE_AUDIT_FILE_FIELDS =
+  'id,name,mimeType,modifiedTime,modifiedByMeTime,createdTime,viewedByMeTime,sharedWithMeTime,' +
+  'size,trashed,parents,driveId,description,webViewLink,resourceKey,permissionIds,' +
+  'hasAugmentedPermissions,inheritedPermissionsDisabled,' +
+  'owners(displayName,emailAddress,me),lastModifyingUser(displayName,emailAddress,me),' +
+  'capabilities(canComment,canEdit,canShare)';
 
 function documentText(content: any[] | undefined): string {
   const output: string[] = [];
@@ -249,8 +257,7 @@ export function registerWorkspaceTools(server: McpServer): void {
           pageSize: args.pageSize ?? 25,
           pageToken: args.pageToken,
           orderBy: 'modifiedTime desc',
-          fields:
-            'nextPageToken,files(id,name,mimeType,modifiedTime,createdTime,size,trashed,parents,webViewLink,owners(displayName,emailAddress))',
+          fields: `nextPageToken,files(${DRIVE_AUDIT_FILE_FIELDS})`,
         })
       );
       return {
@@ -273,8 +280,7 @@ export function registerWorkspaceTools(server: McpServer): void {
       const result = await callGoogle(ctx, 'get Drive file', () =>
         ctx.drive.files.get({
           fileId: args.fileId,
-          fields:
-            'id,name,mimeType,modifiedTime,createdTime,size,trashed,parents,webViewLink,owners(displayName,emailAddress)',
+          fields: DRIVE_AUDIT_FILE_FIELDS,
         })
       );
       return { account: ctx.alias, email: ctx.email, ...result.data };
@@ -537,6 +543,98 @@ export function registerWorkspaceTools(server: McpServer): void {
           htmlLink: event.htmlLink,
           recurringEventId: event.recurringEventId,
         })),
+      };
+    },
+    { readOnlyHint: true }
+  );
+
+  register(
+    server,
+    'calendar_get_availability',
+    'Aggregate free/busy across the account\'s calendars in a time window. By default EVERY calendar visible to the account is included, so a conflict on any secondary calendar (Personal, Family, etc.) is reported as busy; pass calendarIds only as an explicit opt-in to narrow the check. Reports which calendars were included and surfaces per-calendar access errors instead of silently omitting them. Read-only; never crosses account boundaries.',
+    {
+      account,
+      timeMin: z.string().describe('RFC 3339 lower bound with timezone.'),
+      timeMax: z.string().describe('RFC 3339 upper bound with timezone.'),
+      calendarIds: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'Explicit opt-in: only these calendar IDs are checked. Omit to aggregate every calendar visible to the account (the default complete-availability behavior).'
+        ),
+      timeZone: z
+        .string()
+        .optional()
+        .describe('IANA timezone used to interpret the free/busy response; defaults to the account calendar timezone.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const timeMin = new Date(args.timeMin).toISOString();
+      const timeMax = new Date(args.timeMax).toISOString();
+
+      // Resolve the calendar set. A narrow scope is an explicit opt-in; the
+      // default enumerates every calendar visible to THIS account only — the
+      // account boundary is preserved because we only ever touch ctx.calendar,
+      // never another account's client.
+      let scope: 'explicit' | 'all';
+      let included: Array<{ id: string; summary?: string | null; accessRole?: string | null }>;
+      if (args.calendarIds && args.calendarIds.length > 0) {
+        scope = 'explicit';
+        included = (args.calendarIds as string[]).map((id) => ({ id }));
+      } else {
+        scope = 'all';
+        const list = await callGoogle(ctx, 'list calendars for availability', () =>
+          ctx.calendar.calendarList.list({ maxResults: 250 })
+        );
+        included = (list.data.items ?? [])
+          .filter((item) => item.id)
+          .map((item) => ({ id: item.id as string, summary: item.summary, accessRole: item.accessRole }));
+      }
+
+      if (included.length === 0) {
+        return {
+          account: ctx.alias,
+          email: ctx.email,
+          timeMin,
+          timeMax,
+          scope,
+          calendarsIncluded: [],
+          calendarErrors: [],
+          overallBusy: false,
+          busy: [],
+          free: [{ start: timeMin, end: timeMax }],
+          note: 'No calendars resolved for this account.',
+        };
+      }
+
+      // freebusy.query accepts at most 50 calendars per request, so batch.
+      const merged: Record<string, CalendarFreeBusy> = {};
+      for (const batch of chunkCalendarIds(included.map((c) => c.id))) {
+        const res = await callGoogle(ctx, 'query free/busy', () =>
+          ctx.calendar.freebusy.query({
+            requestBody: {
+              timeMin,
+              timeMax,
+              timeZone: args.timeZone,
+              items: batch.map((id) => ({ id })),
+            },
+          })
+        );
+        Object.assign(merged, (res.data.calendars ?? {}) as Record<string, CalendarFreeBusy>);
+      }
+
+      const result = aggregateAvailability(timeMin, timeMax, merged);
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        timeMin,
+        timeMax,
+        scope,
+        calendarsIncluded: included,
+        calendarErrors: result.calendarErrors,
+        overallBusy: result.overallBusy,
+        busy: result.busy,
+        free: result.free,
       };
     },
     { readOnlyHint: true }

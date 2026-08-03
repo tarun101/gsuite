@@ -30,6 +30,7 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'drive_trash_file',
       'drive_upload_file',
       'calendar_list_events',
+      'calendar_get_availability',
       'calendar_create_event',
       'calendar_respond_to_event',
       'docs_get_document',
@@ -74,6 +75,15 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     assert.ok(driveUpload.inputSchema.required.includes('filename'));
     assert.equal(driveUpload.inputSchema.properties.path.type, 'string');
     assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
+
+    const availability = tools.find((tool) => tool.name === 'calendar_get_availability');
+    assert.equal(availability.annotations?.readOnlyHint, true);
+    assert.ok(availability.inputSchema.required.includes('account'));
+    assert.ok(availability.inputSchema.required.includes('timeMin'));
+    assert.ok(availability.inputSchema.required.includes('timeMax'));
+    // calendarIds is the explicit narrow-scope opt-in and must stay optional.
+    assert.equal(availability.inputSchema.properties.calendarIds.type, 'array');
+    assert.ok(!(availability.inputSchema.required ?? []).includes('calendarIds'));
   } finally {
     await client.close();
     fs.rmSync(stateDir, { recursive: true, force: true });

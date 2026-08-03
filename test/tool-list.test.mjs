@@ -35,6 +35,13 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'calendar_respond_to_event',
       'docs_get_document',
       'docs_replace_text',
+      'drive_list_comments',
+      'drive_list_comment_replies',
+      'drive_create_comment',
+      'drive_update_comment',
+      'drive_delete_comment',
+      'drive_create_reply',
+      'drive_delete_reply',
     ]) {
       assert.ok(names.has(required), `missing ${required}`);
     }
@@ -51,6 +58,30 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
 
     const driveRead = tools.find((tool) => tool.name === 'drive_search_files');
     assert.equal(driveRead.annotations?.readOnlyHint, true);
+
+    for (const name of ['drive_list_comments', 'drive_list_comment_replies']) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      assert.equal(tool.annotations?.readOnlyHint, true, `${name} must be read-only`);
+    }
+    for (const name of ['drive_create_comment', 'drive_update_comment', 'drive_create_reply']) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      assert.equal(tool.annotations?.readOnlyHint, false, `${name} must be mutating`);
+      assert.equal(tool.annotations?.destructiveHint, false, `${name} must not be destructive`);
+      assert.ok(tool.inputSchema.required.includes('account'), `${name} must require account`);
+      assert.ok(tool.inputSchema.required.includes('file'), `${name} must require file`);
+      assert.ok(tool.inputSchema.required.includes('content'), `${name} must require content`);
+    }
+    for (const name of ['drive_delete_comment', 'drive_delete_reply']) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      assert.equal(tool.annotations?.destructiveHint, true, `${name} must be destructive`);
+      assert.ok(tool.inputSchema.required.includes('commentId'), `${name} must require commentId`);
+    }
+    assert.ok(
+      tools.find((t) => t.name === 'drive_delete_reply').inputSchema.required.includes('replyId')
+    );
+    assert.ok(
+      tools.find((t) => t.name === 'drive_create_reply').inputSchema.required.includes('commentId')
+    );
 
     const calendarRespond = tools.find((tool) => tool.name === 'calendar_respond_to_event');
     assert.equal(calendarRespond.annotations?.readOnlyHint, false);

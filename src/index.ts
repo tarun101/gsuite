@@ -4,14 +4,14 @@ import { registerTools } from './tools.js';
 import { startScheduledSendWorker } from './scheduler.js';
 import { registerWorkspaceTools } from './workspace-tools.js';
 import { registerChatTools } from './chat-tools.js';
-import { registerDriveAuditTools } from './drive-audit-tools.js';
+import { registerDriveCollabTools } from './drive-collab-tools.js';
 
 // stdout is the JSON-RPC channel — all diagnostics must go to stderr (console.error).
 const server = new McpServer({ name: 'gsuite', version: '0.6.0' });
 registerTools(server);
 registerWorkspaceTools(server);
 registerChatTools(server);
-registerDriveAuditTools(server);
+registerDriveCollabTools(server);
 startScheduledSendWorker();
 
 async function main(): Promise<void> {

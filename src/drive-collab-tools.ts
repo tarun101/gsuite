@@ -156,7 +156,7 @@ function suggestionLedger(document: unknown): {
   return { suggestionIds: [...suggestionIds].sort(), occurrences };
 }
 
-export function registerDriveAuditTools(server: McpServer): void {
+export function registerDriveCollabTools(server: McpServer): void {
   register(
     server,
     'drive_get_start_page_token',
@@ -282,6 +282,38 @@ export function registerDriveAuditTools(server: McpServer): void {
 
   register(
     server,
+    'drive_create_comment',
+    'Create a new top-level comment on a Drive file. Requires Drive write scope.',
+    {
+      account,
+      file,
+      content: z.string().describe('Plain-text content of the new comment.'),
+      anchor: z
+        .string()
+        .optional()
+        .describe('Optional Drive anchor JSON string to attach the comment to a specific region/revision.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const fileId = driveFileId(args.file);
+      const result = await callDrive(ctx, 'create Drive comment', () =>
+        ctx.drive.comments.create({
+          fileId,
+          requestBody: {
+            content: args.content,
+            ...(args.anchor ? { anchor: args.anchor } : {}),
+          },
+          fields:
+            'id,createdTime,modifiedTime,resolved,deleted,author(displayName,photoLink,me),content,htmlContent,anchor',
+        })
+      );
+      return { account: ctx.alias, email: ctx.email, fileId, comment: result.data };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
+  );
+
+  register(
+    server,
     'drive_list_comments',
     'List comments on one Drive file, including resolved/deleted state, assignments, mentions, quoted content, and embedded replies.',
     {
@@ -370,6 +402,131 @@ export function registerDriveAuditTools(server: McpServer): void {
       );
     },
     { readOnlyHint: true }
+  );
+
+  register(
+    server,
+    'drive_delete_comment',
+    'Delete one comment on a Drive file. Drive marks the comment (and its replies) deleted and clears their content; it still appears in drive_list_comments with deleted=true. Requires Drive write scope.',
+    {
+      account,
+      file,
+      commentId: z.string().describe('The comment ID to delete, as returned by drive_list_comments.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const fileId = driveFileId(args.file);
+      await callDrive(ctx, 'delete Drive comment', () =>
+        ctx.drive.comments.delete({
+          fileId,
+          commentId: args.commentId,
+        })
+      );
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        fileId,
+        commentId: args.commentId,
+        deleted: true,
+      };
+    },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: true }
+  );
+
+  register(
+    server,
+    'drive_update_comment',
+    'Update the text content of one comment on a Drive file. Overwrites the existing comment body. Requires Drive write scope.',
+    {
+      account,
+      file,
+      commentId: z.string().describe('The comment ID to update, as returned by drive_list_comments.'),
+      content: z
+        .string()
+        .describe('New plain-text content for the comment; replaces the existing text.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const fileId = driveFileId(args.file);
+      const result = await callDrive(ctx, 'update Drive comment', () =>
+        ctx.drive.comments.update({
+          fileId,
+          commentId: args.commentId,
+          requestBody: { content: args.content },
+          fields:
+            'id,createdTime,modifiedTime,resolved,deleted,author(displayName,photoLink,me),content,htmlContent',
+        })
+      );
+      return { account: ctx.alias, email: ctx.email, fileId, comment: result.data };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
+  );
+
+  register(
+    server,
+    'drive_create_reply',
+    'Create a reply on an existing Drive comment. Requires Drive write scope.',
+    {
+      account,
+      file,
+      commentId: z.string().describe('The parent comment ID, as returned by drive_list_comments.'),
+      content: z.string().describe('Plain-text content of the reply.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const fileId = driveFileId(args.file);
+      const result = await callDrive(ctx, 'create Drive reply', () =>
+        ctx.drive.replies.create({
+          fileId,
+          commentId: args.commentId,
+          requestBody: { content: args.content },
+          fields:
+            'id,createdTime,modifiedTime,deleted,action,author(displayName,photoLink,me),content,htmlContent',
+        })
+      );
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        fileId,
+        commentId: args.commentId,
+        reply: result.data,
+      };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
+  );
+
+  register(
+    server,
+    'drive_delete_reply',
+    'Delete one reply on a Drive comment. Drive marks the reply deleted and clears its content; it still appears in drive_list_comment_replies with deleted=true. Requires Drive write scope.',
+    {
+      account,
+      file,
+      commentId: z.string().describe('The parent comment ID, as returned by drive_list_comments.'),
+      replyId: z
+        .string()
+        .describe('The reply ID to delete, as returned by drive_list_comment_replies.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const fileId = driveFileId(args.file);
+      await callDrive(ctx, 'delete Drive reply', () =>
+        ctx.drive.replies.delete({
+          fileId,
+          commentId: args.commentId,
+          replyId: args.replyId,
+        })
+      );
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        fileId,
+        commentId: args.commentId,
+        replyId: args.replyId,
+        deleted: true,
+      };
+    },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: true }
   );
 
   register(

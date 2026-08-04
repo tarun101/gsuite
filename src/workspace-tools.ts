@@ -242,10 +242,14 @@ export function registerWorkspaceTools(server: McpServer): void {
   register(
     server,
     'drive_search_files',
-    'Search Google Drive files using Drive query syntax.',
+    'Search Google Drive files, including shared drives, using Drive query syntax.',
     {
       account,
       query: z.string().optional().describe('Drive q expression; defaults to "trashed = false".'),
+      driveId: z
+        .string()
+        .optional()
+        .describe('Optional shared-drive ID to scope the search to a single shared drive. Omit to search across My Drive plus all shared drives you can access.'),
       pageSize: z.number().int().min(1).max(100).optional(),
       pageToken: z.string().optional(),
     },
@@ -258,6 +262,10 @@ export function registerWorkspaceTools(server: McpServer): void {
           pageToken: args.pageToken,
           orderBy: 'modifiedTime desc',
           fields: `nextPageToken,files(${DRIVE_AUDIT_FILE_FIELDS})`,
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
+          corpora: args.driveId ? 'drive' : 'allDrives',
+          ...(args.driveId ? { driveId: args.driveId } : {}),
         })
       );
       return {
@@ -281,6 +289,7 @@ export function registerWorkspaceTools(server: McpServer): void {
         ctx.drive.files.get({
           fileId: args.fileId,
           fields: DRIVE_AUDIT_FILE_FIELDS,
+          supportsAllDrives: true,
         })
       );
       return { account: ctx.alias, email: ctx.email, ...result.data };
@@ -311,7 +320,10 @@ export function registerWorkspaceTools(server: McpServer): void {
             )
           )
         : await callGoogle(ctx, 'download Drive file', () =>
-            ctx.drive.files.get({ fileId: args.fileId, alt: 'media' }, { responseType: 'arraybuffer' })
+            ctx.drive.files.get(
+              { fileId: args.fileId, alt: 'media', supportsAllDrives: true },
+              { responseType: 'arraybuffer' }
+            )
           );
       const safe = path.basename(args.filename);
       let target = path.join(os.homedir(), 'Downloads', safe);
@@ -328,8 +340,15 @@ export function registerWorkspaceTools(server: McpServer): void {
   register(
     server,
     'drive_create_folder',
-    'Create a Google Drive folder.',
-    { account, name: z.string(), parentId: z.string().optional() },
+    'Create a Google Drive folder, including inside a shared drive.',
+    {
+      account,
+      name: z.string(),
+      parentId: z
+        .string()
+        .optional()
+        .describe('Parent folder ID; may be a shared-drive folder or a shared-drive root ID. Defaults to My Drive root.'),
+    },
     async (args) => {
       const ctx = workspaceFor(args.account);
       const result = await callGoogle(ctx, 'create Drive folder', () =>
@@ -340,6 +359,7 @@ export function registerWorkspaceTools(server: McpServer): void {
             ...(args.parentId ? { parents: [args.parentId] } : {}),
           },
           fields: 'id,name,mimeType,parents,webViewLink',
+          supportsAllDrives: true,
         })
       );
       return { account: ctx.alias, email: ctx.email, ...result.data };
@@ -369,7 +389,7 @@ export function registerWorkspaceTools(server: McpServer): void {
       parentId: z
         .string()
         .optional()
-        .describe('Destination folder ID; defaults to the account\'s My Drive root.'),
+        .describe('Destination folder ID; may be a shared-drive folder or shared-drive root ID. Defaults to the account\'s My Drive root.'),
     },
     async (args) => {
       const ctx = workspaceFor(args.account);
@@ -393,6 +413,7 @@ export function registerWorkspaceTools(server: McpServer): void {
           },
           media: { mimeType, body },
           fields: 'id,name,mimeType,size,parents,webViewLink',
+          supportsAllDrives: true,
         })
       );
       return { account: ctx.alias, email: ctx.email, ...result.data };
@@ -412,6 +433,7 @@ export function registerWorkspaceTools(server: McpServer): void {
           fileId: args.fileId,
           requestBody: { name: args.name },
           fields: 'id,name,mimeType,parents,webViewLink',
+          supportsAllDrives: true,
         })
       );
       return { account: ctx.alias, email: ctx.email, ...result.data };
@@ -434,7 +456,7 @@ export function registerWorkspaceTools(server: McpServer): void {
       let removeParents: string | undefined;
       if (!args.keepExistingParents) {
         const current = await callGoogle(ctx, 'read Drive parents', () =>
-          ctx.drive.files.get({ fileId: args.fileId, fields: 'parents' })
+          ctx.drive.files.get({ fileId: args.fileId, fields: 'parents', supportsAllDrives: true })
         );
         removeParents = (current.data.parents ?? []).join(',') || undefined;
       }
@@ -444,6 +466,7 @@ export function registerWorkspaceTools(server: McpServer): void {
           addParents: args.newParentId,
           removeParents,
           fields: 'id,name,mimeType,parents,webViewLink',
+          supportsAllDrives: true,
         })
       );
       return { account: ctx.alias, email: ctx.email, ...result.data };
@@ -464,6 +487,7 @@ export function registerWorkspaceTools(server: McpServer): void {
             fileId: args.fileId,
             requestBody: { trashed },
             fields: 'id,name,mimeType,trashed,parents,webViewLink',
+            supportsAllDrives: true,
           })
         );
         return { account: ctx.alias, email: ctx.email, ...result.data };
@@ -472,6 +496,39 @@ export function registerWorkspaceTools(server: McpServer): void {
     );
   trashDrive('drive_trash_file', true);
   trashDrive('drive_untrash_file', false);
+
+  register(
+    server,
+    'drive_list_shared_drives',
+    'List the shared drives the account can access, returning each drive id and name (use the id as driveId in drive_search_files or as a parent for uploads/folders).',
+    {
+      account,
+      query: z
+        .string()
+        .optional()
+        .describe('Optional shared-drive query, e.g. "name contains \'Marketing\'".'),
+      pageSize: z.number().int().min(1).max(100).optional(),
+      pageToken: z.string().optional(),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const result = await callGoogle(ctx, 'list shared drives', () =>
+        ctx.drive.drives.list({
+          q: args.query,
+          pageSize: args.pageSize ?? 100,
+          pageToken: args.pageToken,
+          fields: 'nextPageToken,drives(id,name,createdTime,hidden)',
+        })
+      );
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        nextPageToken: result.data.nextPageToken,
+        drives: result.data.drives ?? [],
+      };
+    },
+    { readOnlyHint: true }
+  );
 
   // Calendar
   register(

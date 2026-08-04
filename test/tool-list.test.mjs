@@ -27,6 +27,7 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'sheets_read_range',
       'sheets_update_range',
       'drive_search_files',
+      'drive_list_shared_drives',
       'drive_trash_file',
       'drive_upload_file',
       'calendar_list_events',
@@ -58,6 +59,14 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
 
     const driveRead = tools.find((tool) => tool.name === 'drive_search_files');
     assert.equal(driveRead.annotations?.readOnlyHint, true);
+    assert.ok(
+      driveRead.inputSchema.properties.driveId,
+      'drive_search_files must expose a driveId param for shared-drive scoping'
+    );
+
+    const sharedDrives = tools.find((tool) => tool.name === 'drive_list_shared_drives');
+    assert.equal(sharedDrives.annotations?.readOnlyHint, true);
+    assert.ok(sharedDrives.inputSchema.required.includes('account'));
 
     for (const name of ['drive_list_comments', 'drive_list_comment_replies']) {
       const tool = tools.find((candidate) => candidate.name === name);

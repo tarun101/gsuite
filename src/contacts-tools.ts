@@ -139,6 +139,18 @@ function personFromArgs(args: any): { person: people_v1.Schema$Person; groups: s
   return { person, groups };
 }
 
+// User-facing clearable field name -> the People API field group emptied on clear.
+// Clearing sends an empty group in updatePersonFields, which removes it with no
+// replacement. (emailAddresses/phoneNumbers/userDefined can also be cleared by
+// passing an empty array; organization and biography have no such value form.)
+const CLEARABLE_GROUPS: Record<string, string> = {
+  organization: 'organizations',
+  emailAddresses: 'emailAddresses',
+  phoneNumbers: 'phoneNumbers',
+  biography: 'biographies',
+  userDefined: 'userDefined',
+};
+
 export function registerContactsTools(server: McpServer): void {
   register(
     server,
@@ -250,7 +262,7 @@ export function registerContactsTools(server: McpServer): void {
   register(
     server,
     'contacts_update',
-    'Update fields on an existing Google Contact. Each provided field group (names, emails, phones, organization) replaces the existing group. Requires the current etag from contacts_get/contacts_list, and Google Contacts write scope.',
+    'Update fields on an existing Google Contact. Each provided field group (names, emails, phones, organization, biography, userDefined) replaces the existing group; list a field in `clear` to remove it entirely with no replacement. Requires the current etag from contacts_get/contacts_list, and Google Contacts write scope.',
     {
       account,
       resourceName,
@@ -258,12 +270,24 @@ export function registerContactsTools(server: McpServer): void {
         .string()
         .describe('Current etag of the contact (from contacts_get/contacts_list) for optimistic concurrency.'),
       ...editableFields,
+      clear: z
+        .array(z.enum(['organization', 'emailAddresses', 'phoneNumbers', 'biography', 'userDefined']))
+        .optional()
+        .describe('Field groups to remove entirely, with no replacement — e.g. ["organization"] clears the company and its job title. Do not also pass a value for a field you are clearing.'),
     },
     async (args) => {
       const ctx = workspaceFor(args.account);
       const { person, groups } = personFromArgs(args);
+      for (const name of args.clear ?? []) {
+        const group = CLEARABLE_GROUPS[name];
+        if (groups.includes(group)) {
+          throw new Error(`Cannot both set and clear "${name}" in one update.`);
+        }
+        (person as any)[group] = [];
+        groups.push(group);
+      }
       if (groups.length === 0) {
-        throw new Error('Provide at least one field to update (e.g. givenName, emailAddresses, organization).');
+        throw new Error('Provide at least one field to update or clear (e.g. givenName, or clear: ["organization"]).');
       }
       const result = await callPeople(ctx, 'update contact', () =>
         ctx.people.people.updateContact({

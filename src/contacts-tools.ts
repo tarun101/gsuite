@@ -23,7 +23,7 @@ const resourceName = z
 // Field group -> the person-fields token the People API uses for read masks and
 // updatePersonFields. Editable groups this server writes are the values here.
 const READ_PERSON_FIELDS =
-  'names,emailAddresses,phoneNumbers,organizations,metadata,memberships';
+  'names,emailAddresses,phoneNumbers,organizations,biographies,userDefined,metadata,memberships';
 
 const ok = (value: unknown): ToolResult => ({
   content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1) }],
@@ -84,6 +84,14 @@ const editableFields = {
     .describe('Phone numbers; replaces all existing phones on update.'),
   organization: z.string().optional().describe('Company / organization name.'),
   jobTitle: z.string().optional().describe('Job title within the organization.'),
+  biography: z
+    .string()
+    .optional()
+    .describe('Contact note / biography. Replaces the existing biography on update.'),
+  userDefined: z
+    .array(z.object({ key: z.string().min(1), value: z.string() }))
+    .optional()
+    .describe('Custom key/value data. Replaces all existing custom data on update.'),
 };
 
 /**
@@ -119,6 +127,14 @@ function personFromArgs(args: any): { person: people_v1.Schema$Person; groups: s
       },
     ];
     groups.push('organizations');
+  }
+  if (args.biography !== undefined) {
+    person.biographies = [{ value: args.biography }];
+    groups.push('biographies');
+  }
+  if (args.userDefined !== undefined) {
+    person.userDefined = args.userDefined;
+    groups.push('userDefined');
   }
   return { person, groups };
 }

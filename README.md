@@ -9,6 +9,7 @@ A local-first MCP server for operating multiple Google Workspace accounts throug
 - **Drive:** search, metadata, download/export, upload, folders, rename, move, and recoverable Trash.
 - **Calendar:** calendar/event reads, cross-calendar free/busy availability (aggregates every calendar the account can see by default, with an explicit narrow-scope opt-in), plus event create (with optional Google Meet), update, RSVP, and delete.
 - **Docs:** plain-text read, create, append, and replace-all.
+- **Contacts:** list, search, get, create, and update personal Google Contacts; delete is available but permanent.
 
 Every service tool requires an `account` alias or exact email. Each account can use a different Desktop OAuth client when Workspace organization policies require it.
 
@@ -16,7 +17,7 @@ The Gmail foundation is based on [Vinksj/claude-gmail-multi](https://github.com/
 
 ## Install
 
-Requires Node.js 20 or newer. Enable the Gmail, Sheets, Drive, Calendar, and Docs APIs in your Google Cloud project.
+Requires Node.js 20 or newer. Enable the Gmail, Sheets, Drive, Calendar, Docs, and People APIs in your Google Cloud project.
 
 ```bash
 npm install
@@ -63,7 +64,7 @@ Scheduling authorizes the later send. The MCP process checks every 30 seconds. I
 - Scheduled-send processing uses a cross-process lock.
 - OAuth clients, tokens, schedule state, downloaded data, and generated account exports are excluded by `.gitignore`.
 
-The OAuth scopes are `gmail.modify`, `spreadsheets`, `drive`, `calendar`, and `documents`. These are powerful scopes intended for self-hosted use; review the tool surface before authorizing an agent.
+The OAuth scopes are `gmail.modify`, `spreadsheets`, `drive`, `calendar`, `documents`, and `contacts`. These are powerful scopes intended for self-hosted use; review the tool surface before authorizing an agent.
 
 ## Related MCPs
 

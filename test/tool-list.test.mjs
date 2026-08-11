@@ -36,6 +36,12 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'calendar_respond_to_event',
       'docs_get_document',
       'docs_replace_text',
+      'contacts_list',
+      'contacts_search',
+      'contacts_get',
+      'contacts_create',
+      'contacts_update',
+      'contacts_delete',
       'drive_list_comments',
       'drive_list_comment_replies',
       'drive_create_comment',
@@ -59,6 +65,23 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
 
     const driveRead = tools.find((tool) => tool.name === 'drive_search_files');
     assert.equal(driveRead.annotations?.readOnlyHint, true);
+
+    for (const name of ['contacts_list', 'contacts_search', 'contacts_get']) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      assert.equal(tool.annotations?.readOnlyHint, true, `${name} must be read-only`);
+      assert.ok(tool.inputSchema.required.includes('account'), `${name} must require account`);
+    }
+    for (const name of ['contacts_create', 'contacts_update']) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      assert.equal(tool.annotations?.readOnlyHint, false, `${name} must be mutating`);
+      assert.equal(tool.annotations?.destructiveHint, false, `${name} must not be destructive`);
+    }
+    const contactsUpdate = tools.find((tool) => tool.name === 'contacts_update');
+    assert.ok(contactsUpdate.inputSchema.required.includes('resourceName'));
+    assert.ok(contactsUpdate.inputSchema.required.includes('etag'));
+    const contactsDelete = tools.find((tool) => tool.name === 'contacts_delete');
+    assert.equal(contactsDelete.annotations?.destructiveHint, true);
+    assert.ok(contactsDelete.inputSchema.required.includes('resourceName'));
     assert.ok(
       driveRead.inputSchema.properties.driveId,
       'drive_search_files must expose a driveId param for shared-drive scoping'

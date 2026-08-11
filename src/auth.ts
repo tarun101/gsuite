@@ -24,6 +24,7 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/chat.spaces.readonly',
   'https://www.googleapis.com/auth/chat.messages',
   'https://www.googleapis.com/auth/chat.memberships.readonly',
+  'https://www.googleapis.com/auth/contacts',
 ];
 const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 

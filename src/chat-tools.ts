@@ -1,9 +1,22 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import type { Readable } from 'node:stream';
 import { z } from 'zod';
 import type { chat_v1 } from 'googleapis';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { BASE_DIR } from './accounts.js';
+import {
+  cachedUploadsMatch,
+  DEFAULT_CHAT_DOWNLOAD_MAX_BYTES,
+  downloadFilename,
+  loadChatUploadState,
+  MAX_CHAT_DOWNLOAD_BYTES,
+  messageFingerprint,
+  prepareChatUpload,
+  resolveAttachmentDownloadSource,
+  resolveDriveExport,
+  saveChatUploadState,
+  saveDownloadStream,
+  type ChatUploadState,
+} from './chat-attachments.js';
 import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
 
@@ -248,37 +261,103 @@ export function registerChatTools(server: McpServer): void {
   register(
     server,
     'chat_download_attachment',
-    'Download one Google Chat attachment to ~/Downloads using its attachment resourceName. Drive-backed attachments should use drive_download_file instead.',
+    'Download one Google Chat attachment to ~/Downloads. Pass resourceName for Chat-uploaded content or driveFileId for a Drive-backed attachment. Streams the file, prevents overwrites, and returns its size and SHA-256.',
     {
       account,
       resourceName: z
         .string()
-        .describe('attachmentDataRef.resourceName returned by chat_get_message or chat_list_messages.'),
-      filename: z.string(),
+        .optional()
+        .describe('For uploaded content: attachmentDataRef.resourceName returned by a Chat message tool.'),
+      driveFileId: z
+        .string()
+        .optional()
+        .describe('For Drive-backed content: driveDataRef.driveFileId returned by a Chat message tool.'),
+      filename: z
+        .string()
+        .optional()
+        .describe('Preferred local filename. Required for uploaded content; defaults to the Drive filename for Drive-backed content.'),
+      contentType: z
+        .string()
+        .optional()
+        .describe('MIME type from Chat attachment metadata; echoed for uploaded content.'),
+      exportMimeType: z
+        .string()
+        .optional()
+        .describe('Optional export MIME type for a Google Docs/Sheets/Slides Drive attachment.'),
+      maxBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_CHAT_DOWNLOAD_BYTES)
+        .optional()
+        .describe(`Maximum accepted download size; defaults to ${DEFAULT_CHAT_DOWNLOAD_MAX_BYTES} bytes.`),
     },
     async (args) => {
-      if (!/^spaces\/.+\/attachments\/.+/.test(args.resourceName)) {
-        throw new Error('resourceName must be the attachmentDataRef.resourceName returned by Chat.');
-      }
+      const source = resolveAttachmentDownloadSource({
+        resourceName: args.resourceName,
+        driveFileId: args.driveFileId,
+      });
       const ctx = workspaceFor(args.account);
-      const response = await callChat(ctx, 'download Chat attachment', () =>
-        ctx.chat.media.download(
-          { resourceName: args.resourceName },
-          { responseType: 'arraybuffer' }
-        )
-      );
-      const safe = path.basename(args.filename);
-      let target = path.join(os.homedir(), 'Downloads', safe);
-      const parsed = path.parse(target);
-      for (let i = 1; fs.existsSync(target); i++) {
-        target = path.join(parsed.dir, `${parsed.name}-${i}${parsed.ext}`);
+      let body: Readable;
+      let filename: string;
+      let contentType: string | null | undefined = args.contentType;
+      let driveMimeType: string | null | undefined;
+
+      if (source === 'chat') {
+        if (!args.filename) {
+          throw new Error('filename is required when downloading Chat-uploaded content.');
+        }
+        const response = await callChat(ctx, 'download Chat attachment', () =>
+          ctx.chat.media.download(
+            { resourceName: args.resourceName },
+            { responseType: 'stream' }
+          )
+        );
+        body = response.data as unknown as Readable;
+        filename = downloadFilename(args.filename, undefined);
+      } else {
+        const metadata = await callChat(ctx, 'read Drive-backed Chat attachment metadata', () =>
+          ctx.drive.files.get({
+            fileId: args.driveFileId,
+            fields: 'id,name,mimeType,size,md5Checksum,capabilities(canDownload)',
+            supportsAllDrives: true,
+          })
+        );
+        if (metadata.data.capabilities?.canDownload === false) {
+          throw new Error('The selected account is not allowed to download this Drive attachment.');
+        }
+        driveMimeType = metadata.data.mimeType;
+        if (!driveMimeType) throw new Error('Drive did not return a MIME type for this attachment.');
+        const exportChoice = resolveDriveExport(driveMimeType, args.exportMimeType);
+        filename = downloadFilename(args.filename, metadata.data.name, exportChoice);
+        contentType = exportChoice?.mimeType ?? driveMimeType;
+        const response = exportChoice
+          ? await callChat(ctx, 'export Drive-backed Chat attachment', () =>
+              ctx.drive.files.export(
+                { fileId: args.driveFileId, mimeType: exportChoice.mimeType },
+                { responseType: 'stream' }
+              )
+            )
+          : await callChat(ctx, 'download Drive-backed Chat attachment', () =>
+              ctx.drive.files.get(
+                { fileId: args.driveFileId, alt: 'media', supportsAllDrives: true },
+                { responseType: 'stream' }
+              )
+            );
+        body = response.data as unknown as Readable;
       }
-      fs.writeFileSync(target, Buffer.from(response.data as ArrayBuffer));
+
+      const saved = await saveDownloadStream(body, filename, { maxBytes: args.maxBytes });
       return {
         account: ctx.alias,
         email: ctx.email,
+        source: source === 'chat' ? 'UPLOADED_CONTENT' : 'DRIVE_FILE',
         resourceName: args.resourceName,
-        path: target,
+        driveFileId: args.driveFileId,
+        driveMimeType,
+        contentType,
+        filename,
+        ...saved,
       };
     },
     { readOnlyHint: true }
@@ -358,34 +437,131 @@ export function registerChatTools(server: McpServer): void {
   register(
     server,
     'chat_send_message',
-    'Send a text message or threaded reply as the selected Google Chat user. Only call after explicit user approval.',
+    'Send a Google Chat message or threaded reply with text and/or file attachments as the selected user. Attachment sends require a requestId and reuse persisted upload references on retry. Only call after explicit user approval.',
     {
       account,
       space,
-      text: z.string().min(1).max(4000),
+      text: z.string().max(4000).optional(),
       thread: z
         .string()
         .optional()
         .describe('Optional thread resource name returned by a message, e.g. spaces/AAAA/threads/BBBB.'),
       requestId: z.string().uuid().optional().describe('Optional UUID for retry-safe message creation.'),
+      attachments: z
+        .array(
+          z.object({
+            filename: z.string().min(1).describe('Filename shown in Google Chat.'),
+            path: z
+              .string()
+              .optional()
+              .describe('Absolute local file path. Provide this or contentBase64, not both.'),
+            contentBase64: z
+              .string()
+              .optional()
+              .describe('Base64 file content. Provide this or path, not both.'),
+            mimeType: z.string().optional().describe('MIME type; inferred from filename when omitted.'),
+          })
+        )
+        .max(10)
+        .optional()
+        .describe('Optional files to upload and attach. Each file may be at most 200 MB.'),
     },
     async (args) => {
       const ctx = workspaceFor(args.account);
+      const parent = requireSpaceName(args.space);
+      const attachmentInputs = args.attachments ?? [];
+      if (!args.text?.trim() && attachmentInputs.length === 0) {
+        throw new Error('Provide message text, at least one attachment, or both.');
+      }
+      if (attachmentInputs.length > 0 && !args.requestId) {
+        throw new Error('requestId is required when sending Chat attachments so retries are safe.');
+      }
+
+      const prepared = await Promise.all(attachmentInputs.map(prepareChatUpload));
+      let uploadState: ChatUploadState | undefined;
+      if (prepared.length > 0) {
+        const fingerprint = messageFingerprint({
+          space: parent,
+          text: args.text,
+          thread: args.thread,
+          attachments: prepared,
+        });
+        uploadState = loadChatUploadState(BASE_DIR, ctx.alias, args.requestId);
+        if (uploadState && !cachedUploadsMatch(uploadState, fingerprint, prepared)) {
+          throw new Error(
+            'requestId was already used with a different Chat message or attachment set; use a new UUID.'
+          );
+        }
+        if (!uploadState) {
+          uploadState = {
+            version: 1,
+            account: ctx.alias,
+            space: parent,
+            requestId: args.requestId,
+            messageFingerprint: fingerprint,
+            attachments: prepared.map(({ filename, mimeType, size, sha256 }) => ({
+              filename,
+              mimeType,
+              size,
+              sha256,
+            })),
+            updatedAt: new Date().toISOString(),
+          };
+          saveChatUploadState(BASE_DIR, uploadState);
+        }
+
+        for (let index = 0; index < prepared.length; index++) {
+          if (uploadState.attachments[index].attachmentDataRef) continue;
+          const item = prepared[index];
+          const uploaded = await callChat(ctx, `upload Chat attachment ${index + 1}`, () =>
+            ctx.chat.media.upload({
+              parent,
+              requestBody: { filename: item.filename },
+              media: { mimeType: item.mimeType, body: item.openBody() },
+            })
+          );
+          const ref = uploaded.data.attachmentDataRef;
+          if (!ref?.attachmentUploadToken && !ref?.resourceName) {
+            throw new Error(`Chat upload ${index + 1} returned no attachment data reference.`);
+          }
+          uploadState.attachments[index].attachmentDataRef = ref;
+          uploadState.updatedAt = new Date().toISOString();
+          saveChatUploadState(BASE_DIR, uploadState);
+        }
+      }
+
+      const attachmentRefs = uploadState?.attachments.map((item) => {
+        if (!item.attachmentDataRef) throw new Error(`Missing uploaded reference for ${item.filename}.`);
+        return { attachmentDataRef: item.attachmentDataRef };
+      });
       const result = await callChat(ctx, 'send Chat message', () =>
         ctx.chat.spaces.messages.create({
-          parent: requireSpaceName(args.space),
+          parent,
           requestId: args.requestId,
           ...(args.thread ? { messageReplyOption: 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD' } : {}),
           requestBody: {
-            text: args.text,
+            ...(args.text ? { text: args.text } : {}),
             ...(args.thread ? { thread: { name: args.thread } } : {}),
+            ...(attachmentRefs?.length ? { attachment: attachmentRefs } : {}),
           },
         })
       );
+      if (uploadState) {
+        uploadState.messageName = result.data.name ?? undefined;
+        uploadState.updatedAt = new Date().toISOString();
+        saveChatUploadState(BASE_DIR, uploadState);
+      }
       return {
         account: ctx.alias,
         email: ctx.email,
         sent: true,
+        attachmentCount: prepared.length,
+        attachments: uploadState?.attachments.map(({ filename, mimeType, size, sha256 }) => ({
+          filename,
+          mimeType,
+          size,
+          sha256,
+        })),
         message: shapeMessage(result.data),
       };
     },

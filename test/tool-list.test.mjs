@@ -34,6 +34,9 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'calendar_get_availability',
       'calendar_create_event',
       'calendar_respond_to_event',
+      'chat_get_message',
+      'chat_download_attachment',
+      'chat_send_message',
       'docs_get_document',
       'docs_replace_text',
       'contacts_list',
@@ -138,6 +141,20 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     assert.ok(driveUpload.inputSchema.required.includes('filename'));
     assert.equal(driveUpload.inputSchema.properties.path.type, 'string');
     assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
+
+    const chatDownload = tools.find((tool) => tool.name === 'chat_download_attachment');
+    assert.equal(chatDownload.annotations?.readOnlyHint, true);
+    assert.equal(chatDownload.inputSchema.properties.resourceName.type, 'string');
+    assert.equal(chatDownload.inputSchema.properties.driveFileId.type, 'string');
+    assert.ok(!(chatDownload.inputSchema.required ?? []).includes('resourceName'));
+    assert.ok(!(chatDownload.inputSchema.required ?? []).includes('driveFileId'));
+
+    const chatSend = tools.find((tool) => tool.name === 'chat_send_message');
+    assert.equal(chatSend.annotations?.destructiveHint, true);
+    assert.equal(chatSend.annotations?.openWorldHint, true);
+    assert.equal(chatSend.inputSchema.properties.attachments.type, 'array');
+    assert.equal(chatSend.inputSchema.properties.attachments.items.properties.path.type, 'string');
+    assert.equal(chatSend.inputSchema.properties.attachments.items.properties.contentBase64.type, 'string');
 
     const availability = tools.find((tool) => tool.name === 'calendar_get_availability');
     assert.equal(availability.annotations?.readOnlyHint, true);

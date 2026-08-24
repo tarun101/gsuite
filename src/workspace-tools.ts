@@ -295,6 +295,65 @@ export function registerWorkspaceTools(server: McpServer): void {
     { readOnlyHint: false, destructiveHint: true, idempotentHint: false }
   );
 
+  register(
+    server,
+    'sheets_hide_rows',
+    'Hide one or more rows in a Google Sheets tab without deleting their contents.',
+    {
+      account,
+      spreadsheet: z.string(),
+      sheetId: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe('Numeric tab ID returned by sheets_get_metadata.'),
+      startRow: z.number().int().positive().describe('First row to hide, using 1-based row numbers.'),
+      endRow: z
+        .number()
+        .int()
+        .positive()
+        .describe('Last row to hide, inclusive, using 1-based row numbers.'),
+    },
+    async (args) => {
+      if (args.endRow < args.startRow) {
+        throw new Error('endRow must be greater than or equal to startRow.');
+      }
+      const ctx = workspaceFor(args.account);
+      const id = spreadsheetId(args.spreadsheet);
+      await callGoogle(ctx, 'hide spreadsheet rows', () =>
+        ctx.sheets.spreadsheets.batchUpdate({
+          spreadsheetId: id,
+          requestBody: {
+            requests: [
+              {
+                updateDimensionProperties: {
+                  range: {
+                    sheetId: args.sheetId,
+                    dimension: 'ROWS',
+                    startIndex: args.startRow - 1,
+                    endIndex: args.endRow,
+                  },
+                  properties: { hiddenByUser: true },
+                  fields: 'hiddenByUser',
+                },
+              },
+            ],
+          },
+        })
+      );
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        spreadsheetId: id,
+        sheetId: args.sheetId,
+        startRow: args.startRow,
+        endRow: args.endRow,
+        hiddenRowCount: args.endRow - args.startRow + 1,
+      };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
+  );
+
   // Drive
   register(
     server,

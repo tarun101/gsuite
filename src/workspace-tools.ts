@@ -238,6 +238,63 @@ export function registerWorkspaceTools(server: McpServer): void {
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
   );
 
+  register(
+    server,
+    'sheets_delete_rows',
+    'Permanently delete one or more rows from a Google Sheets tab, shifting later rows upward.',
+    {
+      account,
+      spreadsheet: z.string(),
+      sheetId: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe('Numeric tab ID returned by sheets_get_metadata.'),
+      startRow: z.number().int().positive().describe('First row to delete, using 1-based row numbers.'),
+      endRow: z
+        .number()
+        .int()
+        .positive()
+        .describe('Last row to delete, inclusive, using 1-based row numbers.'),
+    },
+    async (args) => {
+      if (args.endRow < args.startRow) {
+        throw new Error('endRow must be greater than or equal to startRow.');
+      }
+      const ctx = workspaceFor(args.account);
+      const id = spreadsheetId(args.spreadsheet);
+      await callGoogle(ctx, 'delete spreadsheet rows', () =>
+        ctx.sheets.spreadsheets.batchUpdate({
+          spreadsheetId: id,
+          requestBody: {
+            requests: [
+              {
+                deleteDimension: {
+                  range: {
+                    sheetId: args.sheetId,
+                    dimension: 'ROWS',
+                    startIndex: args.startRow - 1,
+                    endIndex: args.endRow,
+                  },
+                },
+              },
+            ],
+          },
+        })
+      );
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        spreadsheetId: id,
+        sheetId: args.sheetId,
+        startRow: args.startRow,
+        endRow: args.endRow,
+        deletedRowCount: args.endRow - args.startRow + 1,
+      };
+    },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false }
+  );
+
   // Drive
   register(
     server,

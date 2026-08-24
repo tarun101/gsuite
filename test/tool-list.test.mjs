@@ -26,6 +26,7 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'schedule_send',
       'sheets_read_range',
       'sheets_update_range',
+      'sheets_delete_rows',
       'drive_search_files',
       'drive_list_shared_drives',
       'drive_trash_file',
@@ -68,6 +69,17 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
 
     const driveRead = tools.find((tool) => tool.name === 'drive_search_files');
     assert.equal(driveRead.annotations?.readOnlyHint, true);
+
+    const sheetsDeleteRows = tools.find((tool) => tool.name === 'sheets_delete_rows');
+    assert.equal(sheetsDeleteRows.annotations?.readOnlyHint, false);
+    assert.equal(sheetsDeleteRows.annotations?.destructiveHint, true);
+    assert.equal(sheetsDeleteRows.annotations?.idempotentHint, false);
+    for (const field of ['account', 'spreadsheet', 'sheetId', 'startRow', 'endRow']) {
+      assert.ok(
+        sheetsDeleteRows.inputSchema.required.includes(field),
+        `sheets_delete_rows must require ${field}`
+      );
+    }
 
     for (const name of ['contacts_list', 'contacts_search', 'contacts_get']) {
       const tool = tools.find((candidate) => candidate.name === name);

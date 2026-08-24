@@ -5,7 +5,7 @@ A local-first MCP server for operating multiple Google Workspace accounts throug
 ## Services
 
 - **Gmail:** search/read threads and messages; drafts; HTML and attachments; send; scheduled drafts; labels; archive; recoverable Trash.
-- **Sheets:** metadata, range reads, exact range updates, and row append.
+- **Sheets:** metadata, range reads, exact range updates, row append, and permanent row deletion.
 - **Drive:** search, metadata, download/export, upload, folders, rename, move, and recoverable Trash.
 - **Calendar:** calendar/event reads, cross-calendar free/busy availability (aggregates every calendar the account can see by default, with an explicit narrow-scope opt-in), plus event create (with optional Google Meet), update, RSVP, and delete.
 - **Chat:** spaces, messages, members, reactions, text/file sends, and streamed attachment downloads for both Chat-uploaded and Drive-backed files.

@@ -1,7 +1,7 @@
 {
   "name": "gsuite-mcp",
   "version": "0.6.0",
-  "description": "Local-first multi-account Gmail, Sheets, Drive, Calendar, Docs, and Chat MCP server.",
+  "description": "Cloudflare-hosted multi-account Gmail, Sheets, Drive, Calendar, Docs, and Chat MCP server.",
   "type": "module",
   "license": "MIT",
   "engines": {

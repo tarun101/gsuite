@@ -1,6 +1,8 @@
 # gsuite-mcp
 
-A local-first MCP server for operating multiple Google Workspace accounts through one explicit interface.
+A Cloudflare-hosted MCP server for operating multiple Google Workspace accounts through one
+OAuth-protected interface. Production is deployed at
+`https://gsuite-mcp.tarun-me.workers.dev/mcp`; the local Node entry point is for development only.
 
 ## Services
 
@@ -16,7 +18,22 @@ Every service tool requires an `account` alias or exact email. Each account can 
 
 The Gmail foundation is based on [Vinksj/claude-gmail-multi](https://github.com/Vinksj/claude-gmail-multi) and retains its MIT license.
 
-## Install
+## Production connection
+
+The production Worker is protected by Cloudflare Access and configured for the `personal` and
+`work` account aliases. Register and authenticate it in Codex:
+
+```bash
+codex mcp add gsuite --url https://gsuite-mcp.tarun-me.workers.dev/mcp
+codex mcp login gsuite
+```
+
+Do not register `dist/index.js` as the operational connector. Remote mode intentionally disables
+server-side downloads to local paths, path-based attachments, account provisioning, and the local
+scheduled-send loop. Attachment sends use inline base64 content; use an approved client-side
+ingestion or external-automation workflow for the other local-only operations.
+
+## Local development
 
 Requires Node.js 20 or newer. Enable the Gmail, Sheets, Drive, Calendar, Docs, People, and Google Chat APIs in your Google Cloud project.
 
@@ -35,7 +52,7 @@ npm run auth -- --alias work --email you@company.com \
   --credentials /path/to/desktop-oauth-client.json
 ```
 
-Register `dist/index.js` as a stdio MCP server:
+For isolated development or MCP Inspector testing, run `dist/index.js` over stdio:
 
 ```json
 {
@@ -48,17 +65,22 @@ Register `dist/index.js` as a stdio MCP server:
 }
 ```
 
-State is stored under `~/.gsuite-mcp/`. Set `GSUITE_MCP_DIR` to override that location.
+Development state is stored under `~/.gsuite-mcp/`. Set `GSUITE_MCP_DIR` to override that location.
 
 ### Google Chat attachments
 
-`chat_download_attachment` accepts either the `resourceName` returned for Chat-uploaded content or the `driveFileId` returned for a Drive-backed attachment. Downloads are streamed to `~/Downloads`, never overwrite an existing file, and return the exact byte count and SHA-256. Google Docs, Sheets, Slides, and Drawings are exported automatically; callers may override the export MIME type.
+`chat_download_attachment` is available only in local development. In production, use an approved
+client-side download workflow.
 
-`chat_send_message` accepts up to ten attachments using an absolute local `path` or inline `contentBase64`. Attachment sends require a UUID `requestId`. Successful upload references are stored under `~/.gsuite-mcp/chat-upload-state/` and reused if the same request is retried, preventing already-uploaded files from being uploaded again. Each file is limited to Google Chat's 200 MB upload limit.
+`chat_send_message` accepts up to ten attachments. Production requires inline `contentBase64`;
+absolute local paths are development-only. Attachment sends require a UUID `requestId` and reuse
+persisted upload references on retry.
 
 ## Scheduled email
 
-`schedule_send` creates a Gmail draft and queues it. `schedule_draft_send` queues an existing draft. Use `list_scheduled_sends` and `cancel_scheduled_send` to inspect or cancel the queue.
+The scheduled-send queue is local-development-only and is not enabled on the production Worker.
+Production scheduling belongs in an external automation that calls the remote MCP at execution
+time.
 
 Scheduling authorizes the later send. The MCP process checks every 30 seconds. If it is offline at the requested time, the draft sends on its next startup. An ambiguous failure is recorded and never retried automatically, preventing duplicate mail.
 

@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -5,11 +6,13 @@ import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { isRemote } from './accounts.js';
 import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
 import { buildRsvpPatchBody, findSelfAttendee } from './calendar-rsvp.js';
 import { mimeTypeForFilename, resolveUploadSource } from './drive-upload.js';
 import { aggregateAvailability, chunkCalendarIds, type CalendarFreeBusy } from './calendar-availability.js';
+import { needsRecurrenceTimeZone, normalizeRecurrence, shapeEvent } from './calendar-events.js';
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 type ToolAnnotations = {
@@ -103,6 +106,43 @@ const calendarId = z.string().optional().describe('Calendar ID; defaults to "pri
 const eventDateTime = z
   .string()
   .describe('RFC 3339 date-time with explicit offset, or YYYY-MM-DD for an all-day event.');
+
+const eventTransparency = z
+  .enum(['opaque', 'transparent'])
+  .optional()
+  .describe(
+    'Free/busy behavior: "opaque" blocks the time as Busy (the Google default when omitted); "transparent" shows the event as Free, so it never counts against availability.'
+  );
+const eventRecurrence = z
+  .array(z.string())
+  .optional()
+  .describe(
+    'RFC 5545 recurrence lines, one per array entry, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20270630T035959Z", "EXDATE;TZID=America/New_York:20260912T090000"]. Accepts RRULE, EXRULE, RDATE, and EXDATE; DTSTART is rejected because start/end define it. Omit for a single event.'
+  );
+
+/**
+ * Resolve the IANA time zone a timed recurring event needs. Falls back to the
+ * target calendar's own zone — what the Calendar UI does — so a caller who
+ * passed a correct RFC 3339 offset is not rejected for omitting a field the
+ * single-event path never needed.
+ */
+async function resolveRecurrenceTimeZone(
+  ctx: WorkspaceContext,
+  calendarIdValue: string,
+  explicit: string | undefined
+): Promise<string> {
+  if (explicit) return explicit;
+  const result = await callGoogle(ctx, 'read calendar time zone', () =>
+    ctx.calendar.calendars.get({ calendarId: calendarIdValue, fields: 'timeZone' })
+  );
+  const zone = result.data.timeZone;
+  if (!zone) {
+    throw new Error(
+      'A timed recurring event needs an IANA timeZone and this calendar does not declare one; pass timeZone explicitly, for example "America/New_York".'
+    );
+  }
+  return zone;
+}
 
 function eventTime(value: string, timeZone?: string): { date?: string; dateTime?: string; timeZone?: string } {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return { date: value };
@@ -427,6 +467,7 @@ export function registerWorkspaceTools(server: McpServer): void {
         .describe('Required for Google Docs/Sheets/Slides, e.g. application/pdf.'),
     },
     async (args) => {
+      if (isRemote()) throw new Error('drive_download_file is local-only; use Drive export/download from the MCP client.');
       const ctx = workspaceFor(args.account);
       const response = args.exportMimeType
         ? await callGoogle(ctx, 'export Drive file', () =>
@@ -508,6 +549,7 @@ export function registerWorkspaceTools(server: McpServer): void {
         .describe('Destination folder ID; may be a shared-drive folder or shared-drive root ID. Defaults to the account\'s My Drive root.'),
     },
     async (args) => {
+      if (isRemote() && args.path) throw new Error('Remote uploads require inline base64 content; local paths are not accessible.');
       const ctx = workspaceFor(args.account);
       const source = resolveUploadSource({ path: args.path, content: args.content });
       let body: Readable;
@@ -675,7 +717,7 @@ export function registerWorkspaceTools(server: McpServer): void {
   register(
     server,
     'calendar_list_events',
-    'List events within an explicit time window.',
+    'List events within an explicit time window. Every event reports an explicit transparency ("opaque" = Busy, "transparent" = Free) plus a busy boolean. Recurring events are expanded into individual instances by default; set expandRecurring false to get the underlying series with its recurrence rules instead.',
     {
       account,
       calendarId,
@@ -684,9 +726,16 @@ export function registerWorkspaceTools(server: McpServer): void {
       query: z.string().optional(),
       maxResults: z.number().int().min(1).max(250).optional(),
       pageToken: z.string().optional(),
+      expandRecurring: z
+        .boolean()
+        .optional()
+        .describe(
+          'Defaults to true: expand each recurring event into its individual instances, ordered by start time. Set false to return the recurring series itself, which is the only form that carries the recurrence rules (and the only id that can be patched to change the whole series).'
+        ),
     },
     async (args) => {
       const ctx = workspaceFor(args.account);
+      const expandRecurring = args.expandRecurring ?? true;
       const result = await callGoogle(ctx, 'list calendar events', () =>
         ctx.calendar.events.list({
           calendarId: args.calendarId ?? 'primary',
@@ -695,8 +744,10 @@ export function registerWorkspaceTools(server: McpServer): void {
           q: args.query,
           maxResults: args.maxResults ?? 100,
           pageToken: args.pageToken,
-          singleEvents: true,
-          orderBy: 'startTime',
+          // orderBy 'startTime' is only valid alongside singleEvents; asking for
+          // the unexpanded series must fall back to the API's default ordering.
+          singleEvents: expandRecurring,
+          orderBy: expandRecurring ? 'startTime' : undefined,
         })
       );
       return {
@@ -704,18 +755,8 @@ export function registerWorkspaceTools(server: McpServer): void {
         email: ctx.email,
         nextPageToken: result.data.nextPageToken,
         timeZone: result.data.timeZone,
-        events: (result.data.items ?? []).map((event) => ({
-          id: event.id,
-          status: event.status,
-          summary: event.summary,
-          description: event.description,
-          location: event.location,
-          start: event.start,
-          end: event.end,
-          attendees: event.attendees,
-          htmlLink: event.htmlLink,
-          recurringEventId: event.recurringEventId,
-        })),
+        expandRecurring,
+        events: (result.data.items ?? []).map(shapeEvent),
       };
     },
     { readOnlyHint: true }
@@ -724,7 +765,7 @@ export function registerWorkspaceTools(server: McpServer): void {
   register(
     server,
     'calendar_get_availability',
-    'Aggregate free/busy across the account\'s calendars in a time window. By default EVERY calendar visible to the account is included, so a conflict on any secondary calendar (Personal, Family, etc.) is reported as busy; pass calendarIds only as an explicit opt-in to narrow the check. Reports which calendars were included and surfaces per-calendar access errors instead of silently omitting them. Read-only; never crosses account boundaries.',
+    'Aggregate free/busy across the account\'s calendars in a time window. By default EVERY calendar visible to the account is included, so a conflict on any secondary calendar (Personal, Family, etc.) is reported as busy; pass calendarIds only as an explicit opt-in to narrow the check. Reports which calendars were included and surfaces per-calendar access errors instead of silently omitting them. Events marked Free (transparency "transparent") never contribute to busy, so use calendar_list_events when you need those too. Read-only; never crosses account boundaries.',
     {
       account,
       timeMin: z.string().describe('RFC 3339 lower bound with timezone.'),
@@ -816,7 +857,7 @@ export function registerWorkspaceTools(server: McpServer): void {
   register(
     server,
     'calendar_create_event',
-    'Create a timed or all-day calendar event, optionally with a Google Meet video conference.',
+    'Create a timed or all-day calendar event, optionally recurring, optionally marked Free, and optionally with a Google Meet video conference.',
     {
       account,
       calendarId,
@@ -826,6 +867,8 @@ export function registerWorkspaceTools(server: McpServer): void {
       timeZone: z.string().optional(),
       description: z.string().optional(),
       location: z.string().optional(),
+      transparency: eventTransparency,
+      recurrence: eventRecurrence,
       attendees: z.array(z.string().email()).optional(),
       addGoogleMeet: z
         .boolean()
@@ -835,6 +878,12 @@ export function registerWorkspaceTools(server: McpServer): void {
     },
     async (args) => {
       const ctx = workspaceFor(args.account);
+      // Validate recurrence before the call so a bad rule fails with a specific
+      // message instead of an opaque Google 400.
+      const recurrence = normalizeRecurrence(args.recurrence);
+      const timeZone = needsRecurrenceTimeZone(args.start, recurrence)
+        ? await resolveRecurrenceTimeZone(ctx, args.calendarId ?? 'primary', args.timeZone)
+        : args.timeZone;
       const result = await callGoogle(ctx, 'create calendar event', () =>
         ctx.calendar.events.insert({
           calendarId: args.calendarId ?? 'primary',
@@ -843,10 +892,12 @@ export function registerWorkspaceTools(server: McpServer): void {
           conferenceDataVersion: args.addGoogleMeet ? 1 : undefined,
           requestBody: {
             summary: args.summary,
-            start: eventTime(args.start, args.timeZone),
-            end: eventTime(args.end, args.timeZone),
+            start: eventTime(args.start, timeZone),
+            end: eventTime(args.end, timeZone),
             description: args.description,
             location: args.location,
+            ...(args.transparency ? { transparency: args.transparency } : {}),
+            ...(recurrence ? { recurrence } : {}),
             attendees: args.attendees?.map((email: string) => ({ email })),
             ...(args.addGoogleMeet
               ? {
@@ -873,6 +924,9 @@ export function registerWorkspaceTools(server: McpServer): void {
         summary: result.data.summary,
         start: result.data.start,
         end: result.data.end,
+        transparency: result.data.transparency ?? 'opaque',
+        recurrence: result.data.recurrence,
+        ...(recurrence && recurrence.length > 0 ? { recurrenceTimeZone: timeZone } : {}),
         htmlLink: result.data.htmlLink,
         ...(args.addGoogleMeet
           ? {
@@ -891,7 +945,7 @@ export function registerWorkspaceTools(server: McpServer): void {
   register(
     server,
     'calendar_update_event',
-    'Patch selected fields on an existing calendar event.',
+    'Patch selected fields on an existing calendar event, including its free/busy transparency and recurrence rules. To change a whole series, pass the recurring series id (from calendar_list_events with expandRecurring false), not an instance id.',
     {
       account,
       calendarId,
@@ -902,6 +956,10 @@ export function registerWorkspaceTools(server: McpServer): void {
       timeZone: z.string().optional(),
       description: z.string().optional(),
       location: z.string().optional(),
+      transparency: eventTransparency,
+      recurrence: eventRecurrence.describe(
+        'Replacement RFC 5545 recurrence lines (RRULE, EXRULE, RDATE, EXDATE); they replace the existing rules wholesale. Pass an empty array to strip recurrence and turn the series back into a single event. Omit to leave recurrence untouched.'
+      ),
       attendees: z.array(z.string().email()).optional(),
       sendUpdates: z.enum(['all', 'externalOnly', 'none']).optional(),
     },
@@ -910,6 +968,11 @@ export function registerWorkspaceTools(server: McpServer): void {
         throw new Error('start and end must be updated together.');
       }
       const ctx = workspaceFor(args.account);
+      const recurrence = normalizeRecurrence(args.recurrence);
+      const timeZone =
+        args.start && needsRecurrenceTimeZone(args.start, recurrence)
+          ? await resolveRecurrenceTimeZone(ctx, args.calendarId ?? 'primary', args.timeZone)
+          : args.timeZone;
       const result = await callGoogle(ctx, 'update calendar event', () =>
         ctx.calendar.events.patch({
           calendarId: args.calendarId ?? 'primary',
@@ -918,10 +981,13 @@ export function registerWorkspaceTools(server: McpServer): void {
           requestBody: {
             summary: args.summary,
             ...(args.start
-              ? { start: eventTime(args.start, args.timeZone), end: eventTime(args.end, args.timeZone) }
+              ? { start: eventTime(args.start, timeZone), end: eventTime(args.end, timeZone) }
               : {}),
             description: args.description,
             location: args.location,
+            ...(args.transparency ? { transparency: args.transparency } : {}),
+            // An explicit empty array is meaningful here: it clears recurrence.
+            ...(recurrence ? { recurrence } : {}),
             attendees: args.attendees?.map((email: string) => ({ email })),
           },
         })
@@ -933,6 +999,8 @@ export function registerWorkspaceTools(server: McpServer): void {
         summary: result.data.summary,
         start: result.data.start,
         end: result.data.end,
+        transparency: result.data.transparency ?? 'opaque',
+        recurrence: result.data.recurrence,
         htmlLink: result.data.htmlLink,
       };
     },

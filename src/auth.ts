@@ -12,6 +12,7 @@ import {
   saveConfig,
   writeToken,
   dropClient,
+  isRemote,
 } from './accounts.js';
 
 export const GOOGLE_SCOPES = [
@@ -44,6 +45,7 @@ export async function authorizeAccount(
   credentialsPath?: string,
   log: (msg: string) => void = (m) => console.error(m)
 ): Promise<AuthResult> {
+  if (isRemote()) throw new Error('Remote accounts are configured with Worker secrets; run the local auth CLI, then redeploy the rotated secret.');
   if (!/^[a-z0-9][a-z0-9_-]*$/i.test(alias)) {
     throw new Error(`Alias "${alias}" must be alphanumeric (dashes/underscores allowed).`);
   }

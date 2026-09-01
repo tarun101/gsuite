@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import type { gmail_v1 } from 'googleapis';
 
 export const MAX_BODY_CHARS = 4000;

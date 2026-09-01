@@ -14,15 +14,21 @@
     "auth": "tsx src/auth-cli.ts",
     "start": "node dist/index.js",
     "test": "npm run build && node --test test/*.test.mjs",
-    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "deploy": "wrangler deploy",
+    "typecheck:worker": "tsc -p tsconfig.worker.json --noEmit",
+    "types:worker": "wrangler types worker-configuration.d.ts"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.8.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.22.0",
     "googleapis": "^173.0.0",
     "nodemailer": "^9.0.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260820.0",
     "@types/node": "^25.0.0",
     "@types/nodemailer": "^8.0.1",
     "esbuild": "^0.25.0",

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { BASE_DIR } from './accounts.js';
+import { BASE_DIR, isRemote } from './accounts.js';
 import { gmailFor, callGmail } from './gmail.js';
 
 const SCHEDULE_PATH = path.join(BASE_DIR, 'scheduled-sends.json');
@@ -53,6 +53,7 @@ export async function scheduleDraftSend(
   draftId: string,
   sendAt: string
 ): Promise<ScheduledSend> {
+  if (isRemote()) throw new Error('Scheduled sends are not enabled on the remote Worker; create a draft and use an external automation.');
   const ctx = gmailFor(accountParam);
   await callGmail(ctx, 'verify draft before scheduling', () =>
     ctx.gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'metadata' })
@@ -79,6 +80,7 @@ export async function scheduleDraftSend(
 }
 
 export function listScheduledSends(accountParam?: string, includeCompleted = false): ScheduledSend[] {
+  if (isRemote()) throw new Error('Scheduled sends are not enabled on the remote Worker.');
   const wanted = accountParam?.trim().toLowerCase();
   return loadJobs()
     .filter((job) => !wanted || job.account.toLowerCase() === wanted || job.email.toLowerCase() === wanted)
@@ -87,6 +89,7 @@ export function listScheduledSends(accountParam?: string, includeCompleted = fal
 }
 
 export function cancelScheduledSend(scheduleId: string): ScheduledSend {
+  if (isRemote()) throw new Error('Scheduled sends are not enabled on the remote Worker.');
   const jobs = loadJobs();
   const job = jobs.find((candidate) => candidate.id === scheduleId);
   if (!job) throw new Error(`Unknown scheduled send "${scheduleId}".`);

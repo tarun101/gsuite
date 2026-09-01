@@ -2,7 +2,7 @@ import type { Readable } from 'node:stream';
 import { z } from 'zod';
 import type { chat_v1 } from 'googleapis';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { BASE_DIR } from './accounts.js';
+import { BASE_DIR, isRemote } from './accounts.js';
 import {
   cachedUploadsMatch,
   DEFAULT_CHAT_DOWNLOAD_MAX_BYTES,
@@ -293,6 +293,7 @@ export function registerChatTools(server: McpServer): void {
         .describe(`Maximum accepted download size; defaults to ${DEFAULT_CHAT_DOWNLOAD_MAX_BYTES} bytes.`),
     },
     async (args) => {
+      if (isRemote()) throw new Error('chat_download_attachment is local-only; use Drive or Chat download from the MCP client.');
       const source = resolveAttachmentDownloadSource({
         resourceName: args.resourceName,
         driveFileId: args.driveFileId,
@@ -375,6 +376,9 @@ export function registerChatTools(server: McpServer): void {
       pageToken: z.string().optional(),
     },
     async (args) => {
+      if (isRemote() && (args.attachments ?? []).some((item: { path?: string }) => item.path)) {
+        throw new Error('Remote Chat attachments require contentBase64; local paths are not accessible.');
+      }
       const ctx = workspaceFor(args.account);
       const result = await callChat(ctx, 'list Chat members', () =>
         ctx.chat.spaces.members.list({

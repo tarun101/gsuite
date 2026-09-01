@@ -1,10 +1,11 @@
+import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
-import { loadConfig } from './accounts.js';
+import { isRemote, loadConfig } from './accounts.js';
 import { authorizeAccount } from './auth.js';
 import { gmailFor, callGmail, type AccountContext } from './gmail.js';
 import { shapeMessage, shapeThread, shapeThreadSummary, header, extractBody } from './shape.js';
@@ -170,6 +171,7 @@ async function buildMime(
   if (!to || to.length === 0) throw new Error('"to" is required unless replyToMessageId is provided.');
 
   const attachments = (args.attachments ?? existing?.attachments ?? []).map((a) => {
+    if (isRemote() && a.path) throw new Error('Remote attachments require contentBase64; local paths are not accessible.');
     if (!a.path && !a.contentBase64) {
       throw new Error(`Attachment "${a.filename}" needs either "path" or "contentBase64".`);
     }
@@ -196,6 +198,7 @@ async function buildMime(
   const buf = await new Promise<Buffer>((resolve, reject) =>
     mail.compile().build((err, message) => (err ? reject(err) : resolve(message)))
   );
+  // @ts-ignore -- Workers' generated node:buffer type omits encoding overloads that the runtime implements.
   return { raw: buf.toString('base64url'), threadId };
 }
 
@@ -347,6 +350,7 @@ export function registerTools(server: McpServer): void {
         ),
     },
     async (args) => {
+      if (isRemote()) throw new Error('add_account is local-only; remote accounts are configured with Worker secrets.');
       const result = await authorizeAccount(args.alias, args.email, args.credentialsPath);
       return `Account "${result.alias}" (${result.email}) connected and ready.`;
     }
@@ -451,6 +455,7 @@ export function registerTools(server: McpServer): void {
       filename: z.string().optional().describe('Filename to save as (from the attachment metadata).'),
     },
     async (args) => {
+      if (isRemote()) throw new Error('download_attachment is local-only; read the attachment through a client-side download workflow.');
       const ctx = gmailFor(args.account);
       const res = await callGmail(ctx, 'download attachment', () =>
         ctx.gmail.users.messages.attachments.get({
@@ -689,6 +694,7 @@ export function registerTools(server: McpServer): void {
       ...composeShape,
     },
     async (args) => {
+      if (isRemote()) throw new Error('Scheduled sends are not enabled on the remote Worker; create a draft and use an external automation.');
       const ctx = gmailFor(args.account);
       const { sendAt, account: _account, ...composeArgs } = args;
       const { raw, threadId } = await buildMime(ctx, composeArgs);

@@ -194,3 +194,33 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test('the remote build only advertises tools it can actually run', async () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsuite-mcp-remote-test-'));
+  const client = new Client({ name: 'gsuite-remote-test', version: '1' });
+  const transport = new StdioClientTransport({
+    command: 'node',
+    args: ['dist/index.js'],
+    env: { ...process.env, GSUITE_REMOTE: '1', GSUITE_MCP_DIR: stateDir },
+    stderr: 'pipe',
+  });
+  try {
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    const names = new Set(tools.map((tool) => tool.name));
+
+    // Writes into ~/Downloads on the server host — meaningless on a Worker, so
+    // the remote build must not offer it at all.
+    assert.ok(!names.has('drive_download_file'));
+
+    const driveUpload = tools.find((tool) => tool.name === 'drive_upload_file');
+    assert.ok(driveUpload, 'drive_upload_file must stay available remotely');
+    // "read from disk on the machine running this server" is a lie on Workers.
+    assert.equal(driveUpload.inputSchema.properties.path, undefined);
+    assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
+    assert.ok(!/local file/.test(driveUpload.description));
+  } finally {
+    await client.close();
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});

@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Readable } from 'node:stream';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { isRemote } from './accounts.js';
@@ -11,6 +10,7 @@ import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
 import { buildRsvpPatchBody, findSelfAttendee } from './calendar-rsvp.js';
 import { mimeTypeForFilename, resolveUploadSource } from './drive-upload.js';
+import { uploadToDrive } from './drive-transfer.js';
 import { aggregateAvailability, chunkCalendarIds, type CalendarFreeBusy } from './calendar-availability.js';
 import { needsRecurrenceTimeZone, normalizeRecurrence, shapeEvent } from './calendar-events.js';
 
@@ -453,10 +453,13 @@ export function registerWorkspaceTools(server: McpServer): void {
     { readOnlyHint: true }
   );
 
-  register(
+  // Writes into ~/Downloads, so it only means anything when the server runs on
+  // the caller's machine. The remote build does not advertise it at all rather
+  // than advertising a tool that always throws.
+  if (!isRemote()) register(
     server,
     'drive_download_file',
-    'Download a binary Drive file or export a Google Workspace file to ~/Downloads.',
+    'Download a binary Drive file or export a Google Workspace file to ~/Downloads on the machine running this server (local-only).',
     {
       account,
       fileId: z.string(),
@@ -527,18 +530,34 @@ export function registerWorkspaceTools(server: McpServer): void {
   register(
     server,
     'drive_upload_file',
-    'Upload a local file (or inline base64 content) to Google Drive.',
+    isRemote()
+      ? 'Upload inline base64 content to Google Drive.'
+      : 'Upload a local file (or inline base64 content) to Google Drive.',
     {
       account,
       filename: z.string().describe('Name for the file in Drive, e.g. "report.pdf".'),
-      path: z
-        .string()
-        .optional()
-        .describe('Absolute local file path to upload (read from disk on the machine running this server). Use this OR content.'),
+      // Reading from disk only means anything when the server runs on the same
+      // machine as the caller. The deployed Worker has no filesystem, so the
+      // remote build does not advertise `path` at all.
+      ...(isRemote()
+        ? {}
+        : {
+            path: z
+              .string()
+              .optional()
+              .describe(
+                'Absolute local file path to upload, read from disk on the machine running this server. ' +
+                  'Only works for a locally-run server. Use this OR content.'
+              ),
+          }),
       content: z
         .string()
         .optional()
-        .describe('Base64-encoded file content. Use this OR path, not both.'),
+        .describe(
+          isRemote()
+            ? 'Base64-encoded file content.'
+            : 'Base64-encoded file content. Use this OR path, not both.'
+        ),
       mimeType: z
         .string()
         .optional()
@@ -552,29 +571,28 @@ export function registerWorkspaceTools(server: McpServer): void {
       if (isRemote() && args.path) throw new Error('Remote uploads require inline base64 content; local paths are not accessible.');
       const ctx = workspaceFor(args.account);
       const source = resolveUploadSource({ path: args.path, content: args.content });
-      let body: Readable;
+      let data: Uint8Array;
       if (source === 'path') {
         const filePath = args.path as string;
         if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
           throw new Error(`No readable file at path: ${filePath}`);
         }
-        body = fs.createReadStream(filePath);
+        data = new Uint8Array(fs.readFileSync(filePath));
       } else {
-        body = Readable.from(Buffer.from(args.content as string, 'base64'));
+        data = new Uint8Array(Buffer.from(args.content as string, 'base64'));
       }
       const mimeType = args.mimeType ?? mimeTypeForFilename(args.filename);
       const result = await callGoogle(ctx, 'upload Drive file', () =>
-        ctx.drive.files.create({
-          requestBody: {
+        uploadToDrive(ctx.auth, {
+          metadata: {
             name: args.filename,
             ...(args.parentId ? { parents: [args.parentId] } : {}),
           },
-          media: { mimeType, body },
-          fields: 'id,name,mimeType,size,parents,webViewLink',
-          supportsAllDrives: true,
+          mimeType,
+          data,
         })
       );
-      return { account: ctx.alias, email: ctx.email, ...result.data };
+      return { account: ctx.alias, email: ctx.email, ...result };
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   );

@@ -30,8 +30,41 @@ codex mcp login gsuite
 
 Do not register `dist/index.js` as the operational connector. Remote mode intentionally disables
 server-side downloads to local paths, path-based attachments, account provisioning, and the local
-scheduled-send loop. Attachment sends use inline base64 content; use an approved client-side
-ingestion or external-automation workflow for the other local-only operations.
+scheduled-send loop. The remote build does not advertise the tools and parameters it cannot honor:
+`drive_download_file` is absent, and `drive_upload_file` offers no `path`. Attachment sends use
+inline base64 content; use an approved client-side ingestion or external-automation workflow for
+the other local-only operations.
+
+## Uploading files to Drive
+
+`drive_upload_file` takes inline base64 content, which means the whole file travels through the MCP
+client's context. For anything but a small file, use the `gsuite-upload` command instead: it reads
+from disk and prints only the resulting Drive metadata, so the bytes never enter a conversation.
+
+```bash
+npm run upload -- --account work --path ./BCP-v6.0.pdf --parent <folderId>
+```
+
+Uploads under 5 MB use a multipart request; larger ones use a Drive resumable session.
+
+### Remote upload endpoint
+
+For a machine that holds no Google credentials of its own, the Worker can accept the file and
+forward it. The endpoint is served **only** when the `GSUITE_UPLOAD_TOKEN` secret is set — an
+unconfigured deployment has no upload surface at all:
+
+```bash
+wrangler secret put GSUITE_UPLOAD_TOKEN
+```
+
+```bash
+export GSUITE_UPLOAD_URL=https://gsuite-mcp.tarun-me.workers.dev/upload
+export GSUITE_UPLOAD_TOKEN=...
+npm run upload -- --remote --account work --path ./BCP-v6.0.pdf
+```
+
+The raw file is the request body; `account` and `filename` are query parameters and the bearer
+token authenticates. Uploads are capped at 20 MB, since a Worker buffers the body in memory.
 
 ## Local development
 
@@ -66,6 +99,11 @@ For isolated development or MCP Inspector testing, run `dist/index.js` over stdi
 ```
 
 Development state is stored under `~/.gsuite-mcp/`. Set `GSUITE_MCP_DIR` to override that location.
+
+### Drive downloads
+
+`drive_download_file` writes into `~/Downloads` on the machine running the server, so it exists
+only in the local build. In production, download or export from the MCP client instead.
 
 ### Google Chat attachments
 

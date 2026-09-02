@@ -59,3 +59,56 @@ export function resolveUploadSource(source: {
   if (source.content) return 'content';
   throw new Error('Provide either "path" (local file) or "content" (base64) to upload.');
 }
+
+/**
+ * Assemble a `multipart/related` body for Drive's `files.create` upload endpoint.
+ *
+ * We build this ourselves rather than letting googleapis do it. googleapis'
+ * multipart assembly (googleapis-common `multipartUpload`) streams the parts
+ * through a `node:stream` PassThrough and emits the closing `--boundary--`
+ * delimiter from the PassThrough's `flush` hook. That hook never fires under
+ * workerd, so the deployed Worker sent a body with no end boundary and Drive
+ * rejected it with "Missing end boundary in multipart body". Building the bytes
+ * up front is deterministic, identical locally and on Workers, and testable.
+ *
+ * Layout (RFC 2387, matching Google's documented multipart upload):
+ *
+ *     --BOUNDARY CRLF
+ *     Content-Type: application/json; charset=UTF-8 CRLF CRLF
+ *     {metadata} CRLF
+ *     --BOUNDARY CRLF
+ *     Content-Type: <mimeType> CRLF CRLF
+ *     <raw bytes> CRLF
+ *     --BOUNDARY--
+ */
+export function buildMultipartRelatedBody(
+  metadata: Record<string, unknown>,
+  media: { mimeType: string; data: Uint8Array },
+  boundary: string = crypto.randomUUID()
+): { contentType: string; boundary: string; body: Uint8Array } {
+  const encoder = new TextEncoder();
+  const head = encoder.encode(
+    `--${boundary}\r\n` +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+      `${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Type: ${media.mimeType}\r\n\r\n`
+  );
+  // The trailing CRLF here is what closes the media part. Omitting it is the
+  // other way to produce "Missing end boundary" — the delimiter has to start
+  // on its own line.
+  const tail = encoder.encode(`\r\n--${boundary}--`);
+
+  const body = new Uint8Array(head.length + media.data.length + tail.length);
+  body.set(head, 0);
+  body.set(media.data, head.length);
+  body.set(tail, head.length + media.data.length);
+
+  return { contentType: `multipart/related; boundary=${boundary}`, boundary, body };
+}
+
+/** Drive's upload endpoint, with the query Drive needs for shared drives. */
+export function driveUploadUrl(uploadType: 'multipart' | 'resumable', fields: string): string {
+  const params = new URLSearchParams({ uploadType, supportsAllDrives: 'true', fields });
+  return `https://www.googleapis.com/upload/drive/v3/files?${params}`;
+}

@@ -7,8 +7,12 @@
   "engines": {
     "node": ">=20"
   },
+  "bin": {
+    "gsuite-upload": "dist/upload-cli.js"
+  },
   "scripts": {
     "build": "tsc",
+    "upload": "node dist/upload-cli.js",
     "bundle": "node scripts/bundle.mjs",
     "bundle:native": "esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=dist/gsuite-mcp.cjs && esbuild src/auth-cli.ts --bundle --platform=node --format=cjs --outfile=dist/auth.cjs",
     "auth": "tsx src/auth-cli.ts",

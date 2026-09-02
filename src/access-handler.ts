@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import type { AuthRequest, OAuthHelpers } from '@cloudflare/workers-oauth-provider';
+import { handleUploadRequest } from './upload-endpoint.js';
 
 type AccessEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
 type StoredState = { request: AuthRequest; verifier: string };
@@ -107,6 +108,11 @@ async function verifyAccessIdToken(env: AccessEnv, token: string): Promise<{ ema
 export async function handleAccessRequest(request: Request, env: AccessEnv): Promise<Response> {
   const url = new URL(request.url);
   try {
+    // Bearer-token file upload, so bytes reach Drive without going through an
+    // MCP client. Returns null when the route does not apply.
+    const upload = await handleUploadRequest(request, env);
+    if (upload) return upload;
+
     if (request.method === 'GET' && url.pathname === '/') {
       return new Response('gsuite-mcp remote server');
     }

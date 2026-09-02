@@ -2,6 +2,7 @@ import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpAgent } from 'agents/mcp';
 import { handleAccessRequest } from './access-handler.js';
+import { screenClientRegistration } from './redirect-policy.js';
 import { registerChatTools } from './chat-tools.js';
 import { registerContactsTools } from './contacts-tools.js';
 import { registerDriveCollabTools } from './drive-collab-tools.js';
@@ -31,5 +32,7 @@ export default new OAuthProvider({
   authorizeEndpoint: '/authorize',
   tokenEndpoint: '/token',
   clientRegistrationEndpoint: '/register',
+  clientRegistrationCallback: screenClientRegistration,
+  allowPlainPKCE: false,
   defaultHandler: { fetch: handleAccessRequest },
 });

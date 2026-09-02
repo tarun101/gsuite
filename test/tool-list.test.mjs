@@ -167,7 +167,8 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
 
     const chatDownload = tools.find((tool) => tool.name === 'chat_download_attachment');
-    assert.equal(chatDownload.annotations?.readOnlyHint, true);
+    // Not readOnly: it writes the attachment into ~/Downloads. Clients auto-approve on this hint.
+    assert.equal(chatDownload.annotations?.readOnlyHint, false);
     assert.equal(chatDownload.inputSchema.properties.resourceName.type, 'string');
     assert.equal(chatDownload.inputSchema.properties.driveFileId.type, 'string');
     assert.ok(!(chatDownload.inputSchema.required ?? []).includes('resourceName'));

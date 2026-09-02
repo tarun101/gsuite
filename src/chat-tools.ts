@@ -361,7 +361,7 @@ export function registerChatTools(server: McpServer): void {
         ...saved,
       };
     },
-    { readOnlyHint: true }
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
   );
 
   register(

@@ -491,7 +491,7 @@ export function registerWorkspaceTools(server: McpServer): void {
       fs.writeFileSync(target, Buffer.from(response.data as ArrayBuffer));
       return { account: ctx.alias, email: ctx.email, fileId: args.fileId, path: target };
     },
-    { readOnlyHint: true }
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
   );
 
   register(

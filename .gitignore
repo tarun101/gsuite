@@ -15,3 +15,7 @@ imessage-correspondents.json
 whatsapp-chats.json
 *.xlsx
 *.mcpb
+.dev.vars
+.dev.vars.*
+.env
+.wrangler/

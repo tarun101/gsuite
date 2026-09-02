@@ -1,9 +1,11 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { google } from 'googleapis';
+import type { CodeChallengeMethod } from 'google-auth-library';
 import {
   BASE_DIR,
   CREDENTIALS_PATH,
@@ -73,11 +75,19 @@ export async function authorizeAccount(
     clientSecret: creds.client_secret,
     redirectUri,
   });
+  // RFC 8252 s8.1: bind the callback to this flow with `state` and PKCE, so a
+  // local process cannot inject its own authorization code into our loopback
+  // listener and have us store someone else's account under this alias.
+  const state = crypto.randomUUID();
+  const { codeVerifier, codeChallenge } = await client.generateCodeVerifierAsync();
   const authUrl = client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent', // force a refresh token even on re-auth
     scope: GOOGLE_SCOPES,
     login_hint: expectedEmail,
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256' as CodeChallengeMethod,
   });
 
   const codePromise = new Promise<string>((resolve, reject) => {
@@ -92,6 +102,15 @@ export async function authorizeAccount(
       }
       const error = url.searchParams.get('error');
       const code = url.searchParams.get('code');
+      const returnedState = url.searchParams.get('state');
+      if (!returnedState || returnedState !== state) {
+        res.writeHead(400, { 'Content-Type': 'text/html' });
+        res.end('<html><body style="font-family:sans-serif;margin:40px"><h2>gsuite-mcp</h2>' +
+          '<p>Rejected a callback that did not match this authorization request.</p></body></html>');
+        clearTimeout(timer);
+        reject(new Error('OAuth state mismatch — the callback did not come from the authorization we started.'));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(
         '<html><body style="font-family:sans-serif;margin:40px"><h2>gsuite-mcp</h2><p>' +
@@ -113,7 +132,7 @@ export async function authorizeAccount(
 
   try {
     const code = await codePromise;
-    const { tokens } = await client.getToken(code);
+    const { tokens } = await client.getToken({ code, codeVerifier });
     if (!tokens.refresh_token) {
       throw new Error(
         'Google did not return a refresh token. Re-run the auth; if it persists, remove this app at ' +

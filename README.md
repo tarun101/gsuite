@@ -158,11 +158,27 @@ The scheduled-send worker checks every 30 seconds while the MCP process is runni
 offline at the scheduled time, the draft sends the next time the process starts. An ambiguous send
 failure is recorded and is not retried automatically, which reduces duplicate-send risk.
 
+## Uploading files to Drive
+
+`drive_upload_file` takes inline base64 content, which means the whole file travels through the MCP
+client's context. For anything larger than a small file, use the `gsuite-upload` command instead:
+it reads from disk and prints only the resulting Drive metadata, so the bytes never enter a
+conversation.
+
+```bash
+npm run upload -- --account work --path ./report.pdf --parent <folderId>
+```
+
+Uploads under 5 MB use a single multipart request; larger ones use a Drive resumable session.
+
 ## Optional remote deployment
 
 The repository includes a Cloudflare Worker entry point with OAuth protection. Remote mode uses
 HTTP transport and Worker secrets instead of the local token directory. It intentionally disables
 local-path downloads and attachments, account provisioning, and the local scheduled-send loop.
+
+The remote build does not advertise the tools and parameters it cannot honor: `drive_download_file`
+is absent, and `drive_upload_file` offers no `path`.
 
 The checked-in `wrangler.jsonc` describes the maintainer's private deployment. It contains
 deployment-specific Worker, KV, Cloudflare Access, allowed-user, and Google account settings; it is
@@ -176,6 +192,25 @@ After deploying your own Worker, a Codex client can connect to it with:
 codex mcp add gsuite --url https://YOUR-WORKER.example/mcp
 codex mcp login gsuite
 ```
+
+### Upload endpoint
+
+A deployed Worker can also accept a file directly, for a machine that holds no Google credentials of
+its own. The endpoint is served **only** when the `GSUITE_UPLOAD_TOKEN` secret is set, so a
+deployment that has not opted in exposes no upload surface at all:
+
+```bash
+wrangler secret put GSUITE_UPLOAD_TOKEN
+```
+
+```bash
+export GSUITE_UPLOAD_URL=https://YOUR-WORKER.example/upload
+export GSUITE_UPLOAD_TOKEN=...
+npm run upload -- --remote --account work --path ./report.pdf
+```
+
+The raw file is the request body, `account` and `filename` are query parameters, and the bearer
+token authenticates. Uploads are capped at 20 MB, since a Worker buffers the body in memory.
 
 The maintainer's hosted endpoint is access-restricted and is not a shared public Google Workspace
 service. For most users, the local stdio quick start above is the supported path.

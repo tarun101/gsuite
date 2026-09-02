@@ -4,6 +4,37 @@
 server for Google Workspace. It gives an MCP client one account-explicit interface to Gmail,
 Google Calendar, Drive, Docs, Sheets, Chat, and Contacts.
 
+## Why not just use a Gmail MCP?
+
+A Gmail-only MCP is enough when an agent only needs to read or send email. Real Workspace tasks,
+however, rarely stop at the inbox: a message refers to a Drive file, a meeting needs a Calendar
+availability check, a decision belongs in a Sheet or Doc, and the people involved may need to be
+resolved through Contacts or Chat.
+
+You can assemble separate MCP servers for each service, but then the client has to coordinate
+multiple connectors, authentication stores, account-selection conventions, tool shapes, and safety
+models. `gsuite-mcp` keeps that workflow inside one server:
+
+- **One connected tool surface:** 89 tools span Gmail, Calendar, Drive, Docs, Sheets, Chat, and
+  Contacts, so an agent can complete cross-service work without switching integrations.
+- **Explicit multi-account routing:** every Google service call names an account alias or exact
+  email. Personal and work accounts can coexist without relying on a hidden default.
+- **One authorization flow per account:** authorize an account once for the supported Workspace
+  services, while still allowing separate OAuth clients where an organization requires them.
+- **Practical read and write coverage:** the server goes beyond search and retrieval to drafts,
+  sends, uploads, calendar changes, document edits, Sheet updates, comments, and other operational
+  workflows.
+- **Consistent safety behavior:** tool annotations identify read-only, mutating, destructive, and
+  external actions; Gmail and Drive deletion uses recoverable Trash; account identity is returned
+  in results.
+- **Local or remote operation:** run over local stdio with files and scheduled sends, or deploy the
+  OAuth-protected Worker for remote access. Large Drive uploads can bypass the model context
+  entirely.
+
+If you only need narrow, read-only Gmail access, a smaller single-purpose server may still be the
+better choice. This project is for users who want one coherent MCP for multi-account work across
+the broader Google Workspace suite.
+
 The recommended setup runs locally over stdio. You clone the repository, authorize your own
 Google accounts, and point your MCP client at the built server. An optional Cloudflare Workers
 entry point is included for operators who need a remote, OAuth-protected deployment.

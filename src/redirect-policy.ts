@@ -14,6 +14,10 @@
 export const ALLOWED_REDIRECT_URIS = [
   'https://www.cursor.com',
   'cursor://anysphere.cursor-mcp/oauth/callback',
+  // Claude web/desktop custom connectors post the code back to Anthropic's own
+  // callback; both origins are listed because claude.ai and claude.com are both live.
+  'https://claude.ai',
+  'https://claude.com',
 ];
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', '[::1]', 'localhost']);

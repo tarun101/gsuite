@@ -4,9 +4,16 @@
 server for Google Workspace. It gives an MCP client one account-explicit interface to Gmail,
 Google Calendar, Drive, Docs, Sheets, Chat, and Contacts.
 
-The recommended setup runs locally over stdio. You clone the repository, authorize your own
-Google accounts, and point your MCP client at the built server. An optional Cloudflare Workers
-entry point is included for operators who need a remote, OAuth-protected deployment.
+## Why this instead of a Gmail-only MCP?
+
+A Gmail MCP handles email. `gsuite-mcp` handles the work the email is about:
+
+- **Act, not just retrieve:** send drafts, upload files, change calendars, edit Docs and Sheets,
+  manage comments, and work in Chat and Contacts.
+- **Use one Workspace server:** 89 tools cover seven Google services without separate connectors.
+- **Route accounts explicitly:** every service call names the personal or work account to use.
+- **Run locally or remotely:** use stdio for local files and scheduled sends, or an OAuth-protected
+  Worker. Large Drive uploads can bypass the model context entirely.
 
 ## What it supports
 

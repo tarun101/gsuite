@@ -26,6 +26,8 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'schedule_send',
       'sheets_read_range',
       'sheets_update_range',
+      'sheets_delete_rows',
+      'sheets_hide_rows',
       'drive_search_files',
       'drive_list_shared_drives',
       'drive_trash_file',
@@ -71,6 +73,28 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
 
     const driveRead = tools.find((tool) => tool.name === 'drive_search_files');
     assert.equal(driveRead.annotations?.readOnlyHint, true);
+
+    const sheetsDeleteRows = tools.find((tool) => tool.name === 'sheets_delete_rows');
+    assert.equal(sheetsDeleteRows.annotations?.readOnlyHint, false);
+    assert.equal(sheetsDeleteRows.annotations?.destructiveHint, true);
+    assert.equal(sheetsDeleteRows.annotations?.idempotentHint, false);
+    for (const field of ['account', 'spreadsheet', 'sheetId', 'startRow', 'endRow']) {
+      assert.ok(
+        sheetsDeleteRows.inputSchema.required.includes(field),
+        `sheets_delete_rows must require ${field}`
+      );
+    }
+
+    const sheetsHideRows = tools.find((tool) => tool.name === 'sheets_hide_rows');
+    assert.equal(sheetsHideRows.annotations?.readOnlyHint, false);
+    assert.equal(sheetsHideRows.annotations?.destructiveHint, false);
+    assert.equal(sheetsHideRows.annotations?.idempotentHint, true);
+    for (const field of ['account', 'spreadsheet', 'sheetId', 'startRow', 'endRow']) {
+      assert.ok(
+        sheetsHideRows.inputSchema.required.includes(field),
+        `sheets_hide_rows must require ${field}`
+      );
+    }
 
     for (const name of ['contacts_list', 'contacts_search', 'contacts_get']) {
       const tool = tools.find((candidate) => candidate.name === name);
@@ -166,7 +190,8 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     assert.ok(slidesUpdate.inputSchema.required.includes('requests'));
 
     const chatDownload = tools.find((tool) => tool.name === 'chat_download_attachment');
-    assert.equal(chatDownload.annotations?.readOnlyHint, true);
+    // Not readOnly: it writes the attachment into ~/Downloads. Clients auto-approve on this hint.
+    assert.equal(chatDownload.annotations?.readOnlyHint, false);
     assert.equal(chatDownload.inputSchema.properties.resourceName.type, 'string');
     assert.equal(chatDownload.inputSchema.properties.driveFileId.type, 'string');
     assert.ok(!(chatDownload.inputSchema.required ?? []).includes('resourceName'));
@@ -189,6 +214,36 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     // calendarIds is the explicit narrow-scope opt-in and must stay optional.
     assert.equal(availability.inputSchema.properties.calendarIds.type, 'array');
     assert.ok(!(availability.inputSchema.required ?? []).includes('calendarIds'));
+  } finally {
+    await client.close();
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('the remote build only advertises tools it can actually run', async () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsuite-mcp-remote-test-'));
+  const client = new Client({ name: 'gsuite-remote-test', version: '1' });
+  const transport = new StdioClientTransport({
+    command: 'node',
+    args: ['dist/index.js'],
+    env: { ...process.env, GSUITE_REMOTE: '1', GSUITE_MCP_DIR: stateDir },
+    stderr: 'pipe',
+  });
+  try {
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    const names = new Set(tools.map((tool) => tool.name));
+
+    // Writes into ~/Downloads on the server host — meaningless on a Worker, so
+    // the remote build must not offer it at all.
+    assert.ok(!names.has('drive_download_file'));
+
+    const driveUpload = tools.find((tool) => tool.name === 'drive_upload_file');
+    assert.ok(driveUpload, 'drive_upload_file must stay available remotely');
+    // "read from disk on the machine running this server" is a lie on Workers.
+    assert.equal(driveUpload.inputSchema.properties.path, undefined);
+    assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
+    assert.ok(!/local file/.test(driveUpload.description));
   } finally {
     await client.close();
     fs.rmSync(stateDir, { recursive: true, force: true });

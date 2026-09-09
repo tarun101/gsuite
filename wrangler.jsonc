@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsuite-mcp",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [{ "name": "MCP_OBJECT", "class_name": "GSuiteMCP" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GSuiteMCP"] }],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "893b5c9d45714d398721a2c6856d67ae" }],
+  "vars": {
+    "GSUITE_REMOTE": "1",
+    "GSUITE_MCP_DIR": "/tmp/gsuite-mcp",
+    "ALLOWED_EMAIL": "i@tarun.me",
+    "ACCESS_ISSUER": "https://tarunhome.cloudflareaccess.com/cdn-cgi/access/sso/oidc/7c136cca74de8ac5f530a06edee6b7d9efc2a495eacaa022db6aa67a609c59ab",
+    "ACCESS_CLIENT_ID": "7c136cca74de8ac5f530a06edee6b7d9efc2a495eacaa022db6aa67a609c59ab",
+    "ACCESS_TOKEN_URL": "https://tarunhome.cloudflareaccess.com/cdn-cgi/access/sso/oidc/7c136cca74de8ac5f530a06edee6b7d9efc2a495eacaa022db6aa67a609c59ab/token",
+    "ACCESS_AUTHORIZATION_URL": "https://tarunhome.cloudflareaccess.com/cdn-cgi/access/sso/oidc/7c136cca74de8ac5f530a06edee6b7d9efc2a495eacaa022db6aa67a609c59ab/authorization",
+    "ACCESS_JWKS_URL": "https://tarunhome.cloudflareaccess.com/cdn-cgi/access/sso/oidc/7c136cca74de8ac5f530a06edee6b7d9efc2a495eacaa022db6aa67a609c59ab/jwks",
+    "GOOGLE_PERSONAL_EMAIL": "i@tarun.me",
+    "GOOGLE_WORK_EMAIL": "tarun@routespring.com"
+  }
+}

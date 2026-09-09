@@ -7,6 +7,7 @@ await esbuild.initialize({ worker: false });
 const targets = [
   ['src/index.ts', 'dist/gsuite-mcp.cjs'],
   ['src/auth-cli.ts', 'dist/auth.cjs'],
+  ['src/upload-cli.ts', 'dist/upload.cjs'],
 ];
 for (const [entryPoint, outfile] of targets) {
   const t0 = Date.now();

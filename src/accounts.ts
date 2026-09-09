@@ -11,6 +11,10 @@ export const BASE_DIR =
 export const CONFIG_PATH = path.join(BASE_DIR, 'config.json');
 export const CREDENTIALS_PATH = path.join(BASE_DIR, 'credentials.json');
 
+export const isRemote = () => process.env.GSUITE_REMOTE === '1';
+const envName = (alias: string, suffix: string) =>
+  `GOOGLE_${alias.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_${suffix}`;
+
 export interface AccountEntry {
   email: string;
   tokenFile: string;
@@ -23,11 +27,23 @@ export interface Config {
 }
 
 export function loadConfig(): Config {
+  if (isRemote()) {
+    const accounts = Object.fromEntries(
+      ['personal', 'work'].flatMap((alias) => {
+        const email = process.env[envName(alias, 'EMAIL')];
+        return email
+          ? [[alias, { email, tokenFile: `env:${alias}`, credentialFile: `env:${alias}` }]]
+          : [];
+      })
+    );
+    return { defaultAccount: null, accounts };
+  }
   if (!fs.existsSync(CONFIG_PATH)) return { defaultAccount: null, accounts: {} };
   return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) as Config;
 }
 
 export function saveConfig(config: Config): void {
+  if (isRemote()) throw new Error('Remote accounts are configured with Worker secrets, not MCP tools.');
   fs.mkdirSync(BASE_DIR, { recursive: true, mode: 0o700 });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
 }
@@ -38,6 +54,14 @@ interface ClientCredentials {
 }
 
 export function loadClientCredentials(entry?: Pick<AccountEntry, 'credentialFile'>): ClientCredentials {
+  if (isRemote()) {
+    const alias = entry?.credentialFile?.replace(/^env:/, '');
+    if (!alias) throw new Error('Remote account alias is missing.');
+    const client_id = process.env[envName(alias, 'CLIENT_ID')];
+    const client_secret = process.env[envName(alias, 'CLIENT_SECRET')];
+    if (!client_id || !client_secret) throw new Error(`Remote OAuth client secret is missing for "${alias}".`);
+    return { client_id, client_secret };
+  }
   const credentialPath = entry?.credentialFile
     ? path.join(BASE_DIR, entry.credentialFile)
     : CREDENTIALS_PATH;
@@ -88,6 +112,7 @@ function tokenPath(entry: AccountEntry): string {
 }
 
 export function writeToken(entry: AccountEntry, token: StoredToken): void {
+  if (isRemote()) return;
   const file = tokenPath(entry);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, JSON.stringify(token, null, 2) + '\n', { mode: 0o600 });
@@ -96,18 +121,25 @@ export function writeToken(entry: AccountEntry, token: StoredToken): void {
 const clientCache = new Map<string, OAuth2Client>();
 
 export function getClient(alias: string, entry: AccountEntry): OAuth2Client {
-  const cached = clientCache.get(alias);
+  const remote = isRemote();
+  const cached = remote ? undefined : clientCache.get(alias);
   if (cached) return cached;
 
   const creds = loadClientCredentials(entry);
   const file = tokenPath(entry);
-  if (!fs.existsSync(file)) {
+  if (!remote && !fs.existsSync(file)) {
     throw new Error(
       `No stored authorization for account "${alias}" (${entry.email}). ` +
         `Run: npm run auth -- --alias ${alias}`
     );
   }
-  const stored = JSON.parse(fs.readFileSync(file, 'utf8')) as StoredToken;
+  const stored = remote
+    ? {
+        refresh_token: process.env[envName(alias, 'REFRESH_TOKEN')] ?? '',
+        email: entry.email,
+      }
+    : (JSON.parse(fs.readFileSync(file, 'utf8')) as StoredToken);
+  if (!stored.refresh_token) throw new Error(`Remote refresh token is missing for "${alias}".`);
 
   const client = new google.auth.OAuth2({ clientId: creds.client_id, clientSecret: creds.client_secret });
   client.setCredentials({
@@ -116,7 +148,7 @@ export function getClient(alias: string, entry: AccountEntry): OAuth2Client {
     expiry_date: stored.expiry_date,
   });
   // Persist refreshed access tokens (and any rotated refresh token) so cold starts skip a refresh round-trip.
-  client.on('tokens', (tokens) => {
+  if (!remote) client.on('tokens', (tokens) => {
     try {
       stored.refresh_token = tokens.refresh_token ?? stored.refresh_token;
       stored.access_token = tokens.access_token ?? stored.access_token;
@@ -127,7 +159,7 @@ export function getClient(alias: string, entry: AccountEntry): OAuth2Client {
     }
   });
 
-  clientCache.set(alias, client);
+  if (!remote) clientCache.set(alias, client);
   return client;
 }
 

@@ -9,11 +9,13 @@ import {
   sheets_v4,
   slides_v1,
 } from 'googleapis';
-import { getClient, resolveAccount } from './accounts.js';
+import { getClient, resolveAccount, type OAuth2Client } from './accounts.js';
 
 export interface WorkspaceContext {
   alias: string;
   email: string;
+  /** Shared OAuth client, for the few calls that bypass googleapis and use fetch directly. */
+  auth: OAuth2Client;
   calendar: calendar_v3.Calendar;
   chat: chat_v1.Chat;
   docs: docs_v1.Docs;
@@ -30,6 +32,7 @@ export function workspaceFor(accountParam: string): WorkspaceContext {
   return {
     alias,
     email: entry.email,
+    auth,
     calendar: google.calendar({ version: 'v3', auth }),
     chat: google.chat({ version: 'v1', auth }),
     docs: google.docs({ version: 'v1', auth }),

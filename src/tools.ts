@@ -13,45 +13,9 @@ import {
   listScheduledSends,
   scheduleDraftSend,
 } from './scheduler.js';
+import { account, register } from './register.js';
 
 const PREFIX = 'Multi-account Gmail (all connected accounts). ';
-const account = z
-  .string()
-  .describe('Which Gmail account to use: an alias (e.g. "personal", "work") or the email address. See list_accounts.');
-
-type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
-type ToolAnnotations = {
-  readOnlyHint?: boolean;
-  destructiveHint?: boolean;
-  idempotentHint?: boolean;
-  openWorldHint?: boolean;
-};
-
-const ok = (data: unknown): ToolResult => ({
-  content: [{ type: 'text', text: typeof data === 'string' ? data : JSON.stringify(data, null, 1) }],
-});
-const fail = (e: unknown): ToolResult => ({
-  isError: true,
-  content: [{ type: 'text', text: e instanceof Error ? e.message : String(e) }],
-});
-
-function register(
-  server: McpServer,
-  name: string,
-  description: string,
-  inputSchema: z.ZodRawShape,
-  handler: (args: any) => Promise<unknown>,
-  annotations?: ToolAnnotations
-): void {
-  server.registerTool(name, { description, inputSchema, annotations }, async (args: any) => {
-    try {
-      return ok(await handler(args));
-    } catch (e) {
-      console.error(`gmail-multi ${name}:`, e instanceof Error ? e.message : e);
-      return fail(e);
-    }
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Compose helpers

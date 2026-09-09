@@ -6,6 +6,7 @@ import { registerWorkspaceTools } from './workspace-tools.js';
 import { registerChatTools } from './chat-tools.js';
 import { registerDriveCollabTools } from './drive-collab-tools.js';
 import { registerContactsTools } from './contacts-tools.js';
+import { registerSlidesTools } from './slides-tools.js';
 
 // stdout is the JSON-RPC channel — all diagnostics must go to stderr (console.error).
 const server = new McpServer({ name: 'gsuite', version: '0.6.0' });
@@ -14,6 +15,7 @@ registerWorkspaceTools(server);
 registerChatTools(server);
 registerDriveCollabTools(server);
 registerContactsTools(server);
+registerSlidesTools(server);
 startScheduledSendWorker();
 
 async function main(): Promise<void> {

@@ -2,49 +2,13 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
-
-type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
-type ToolAnnotations = {
-  readOnlyHint?: boolean;
-  destructiveHint?: boolean;
-  idempotentHint?: boolean;
-  openWorldHint?: boolean;
-};
+import { account, register } from './register.js';
 
 const MAX_RESULT_BYTES = 500_000;
-const account = z
-  .string()
-  .describe('Required account alias or exact email address, for example "personal" or "work".');
 const file = z
   .string()
   .describe('Google Drive file/folder URL or opaque file ID.');
 const pageToken = z.string().optional();
-const ok = (value: unknown): ToolResult => ({
-  content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1) }],
-});
-const fail = (error: unknown): ToolResult => ({
-  isError: true,
-  content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
-});
-
-function register(
-  server: McpServer,
-  name: string,
-  description: string,
-  inputSchema: z.ZodRawShape,
-  handler: (args: any) => Promise<unknown>,
-  annotations?: ToolAnnotations
-): void {
-  server.registerTool(name, { description, inputSchema, annotations }, async (args: any) => {
-    try {
-      return ok(await handler(args));
-    } catch (error) {
-      console.error(`gsuite ${name}:`, error instanceof Error ? error.message : error);
-      return fail(error);
-    }
-  });
-}
-
 async function callDrive<T>(
   ctx: WorkspaceContext,
   operation: string,

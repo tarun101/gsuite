@@ -54,7 +54,7 @@ State is stored under `~/.gsuite-mcp/`. Set `GSUITE_MCP_DIR` to override that lo
 
 `chat_download_attachment` accepts either the `resourceName` returned for Chat-uploaded content or the `driveFileId` returned for a Drive-backed attachment. Downloads are streamed to `~/Downloads`, never overwrite an existing file, and return the exact byte count and SHA-256. Google Docs, Sheets, Slides, and Drawings are exported automatically; callers may override the export MIME type.
 
-`chat_send_message` accepts up to ten attachments using an absolute local `path` or inline `contentBase64`. Attachment sends require a UUID `requestId`. Successful upload references are stored under `~/.gsuite-mcp/chat-upload-state/` and reused if the same request is retried, preventing already-uploaded files from being uploaded again. Each file is limited to Google Chat's 200 MB upload limit.
+`chat_send_message` accepts up to ten attachments using an absolute local `path` or inline `contentBase64`. Attachment sends require a UUID `requestId`, which Google Chat uses to make message creation idempotent. Reuse a request ID only for an identical request; a retry may upload the attachment bytes again but creates at most one message. Each file is limited to Google Chat's 200 MB upload limit.
 
 ## Scheduled email
 

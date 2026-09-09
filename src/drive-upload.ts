@@ -34,6 +34,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   ppt: 'application/vnd.ms-powerpoint',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  odp: 'application/vnd.oasis.opendocument.presentation',
 };
 
 export const DEFAULT_MIME_TYPE = 'application/octet-stream';

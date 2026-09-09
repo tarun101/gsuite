@@ -30,6 +30,9 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'drive_list_shared_drives',
       'drive_trash_file',
       'drive_upload_file',
+      'drive_import_presentation',
+      'slides_get_presentation',
+      'slides_batch_update',
       'calendar_list_events',
       'calendar_get_availability',
       'calendar_create_event',
@@ -142,6 +145,26 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     assert.equal(driveUpload.inputSchema.properties.path.type, 'string');
     assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
 
+    const driveImportPresentation = tools.find((tool) => tool.name === 'drive_import_presentation');
+    assert.equal(driveImportPresentation.annotations?.readOnlyHint, false);
+    assert.equal(driveImportPresentation.annotations?.destructiveHint, false);
+    assert.ok(driveImportPresentation.inputSchema.required.includes('account'));
+    assert.ok(driveImportPresentation.inputSchema.required.includes('path'));
+    assert.ok(driveImportPresentation.inputSchema.required.includes('title'));
+    assert.equal(driveImportPresentation.inputSchema.properties.parentId.type, 'string');
+
+    const slidesRead = tools.find((tool) => tool.name === 'slides_get_presentation');
+    assert.equal(slidesRead.annotations?.readOnlyHint, true);
+    assert.ok(slidesRead.inputSchema.required.includes('account'));
+    assert.ok(slidesRead.inputSchema.required.includes('presentation'));
+
+    const slidesUpdate = tools.find((tool) => tool.name === 'slides_batch_update');
+    assert.equal(slidesUpdate.annotations?.readOnlyHint, false);
+    assert.equal(slidesUpdate.annotations?.destructiveHint, true);
+    assert.ok(slidesUpdate.inputSchema.required.includes('account'));
+    assert.ok(slidesUpdate.inputSchema.required.includes('presentation'));
+    assert.ok(slidesUpdate.inputSchema.required.includes('requests'));
+
     const chatDownload = tools.find((tool) => tool.name === 'chat_download_attachment');
     assert.equal(chatDownload.annotations?.readOnlyHint, true);
     assert.equal(chatDownload.inputSchema.properties.resourceName.type, 'string');
@@ -155,6 +178,8 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     assert.equal(chatSend.inputSchema.properties.attachments.type, 'array');
     assert.equal(chatSend.inputSchema.properties.attachments.items.properties.path.type, 'string');
     assert.equal(chatSend.inputSchema.properties.attachments.items.properties.contentBase64.type, 'string');
+    assert.equal(chatSend.inputSchema.properties.requestId.format, 'uuid');
+    assert.match(chatSend.inputSchema.properties.requestId.description, /identical request/);
 
     const availability = tools.find((tool) => tool.name === 'calendar_get_availability');
     assert.equal(availability.annotations?.readOnlyHint, true);

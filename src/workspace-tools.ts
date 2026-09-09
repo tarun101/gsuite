@@ -10,43 +10,7 @@ import { workspaceFor, type WorkspaceContext } from './workspace.js';
 import { buildRsvpPatchBody, findSelfAttendee } from './calendar-rsvp.js';
 import { mimeTypeForFilename, resolveUploadSource } from './drive-upload.js';
 import { aggregateAvailability, chunkCalendarIds, type CalendarFreeBusy } from './calendar-availability.js';
-
-type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
-type ToolAnnotations = {
-  readOnlyHint?: boolean;
-  destructiveHint?: boolean;
-  idempotentHint?: boolean;
-  openWorldHint?: boolean;
-};
-
-const account = z
-  .string()
-  .describe('Required account alias or exact email address, for example "personal" or "work".');
-const ok = (value: unknown): ToolResult => ({
-  content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1) }],
-});
-const fail = (error: unknown): ToolResult => ({
-  isError: true,
-  content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
-});
-
-function register(
-  server: McpServer,
-  name: string,
-  description: string,
-  inputSchema: z.ZodRawShape,
-  handler: (args: any) => Promise<unknown>,
-  annotations?: ToolAnnotations
-): void {
-  server.registerTool(name, { description, inputSchema, annotations }, async (args: any) => {
-    try {
-      return ok(await handler(args));
-    } catch (error) {
-      console.error(`gsuite ${name}:`, error instanceof Error ? error.message : error);
-      return fail(error);
-    }
-  });
-}
+import { account, register } from './register.js';
 
 async function callGoogle<T>(
   ctx: WorkspaceContext,
@@ -97,6 +61,39 @@ function documentText(content: any[] | undefined): string {
   };
   walk(content);
   return output.join('').slice(0, 100_000);
+}
+
+function documentTabs(tabs: any[] | undefined): Array<{
+  tabId?: string;
+  title?: string;
+  index?: number;
+  nestingLevel?: number;
+  parentTabId?: string;
+  text: string;
+}> {
+  const output: Array<{
+    tabId?: string;
+    title?: string;
+    index?: number;
+    nestingLevel?: number;
+    parentTabId?: string;
+    text: string;
+  }> = [];
+  const walk = (items: any[] | undefined) => {
+    for (const tab of items ?? []) {
+      output.push({
+        tabId: tab.tabProperties?.tabId,
+        title: tab.tabProperties?.title,
+        index: tab.tabProperties?.index,
+        nestingLevel: tab.tabProperties?.nestingLevel,
+        parentTabId: tab.tabProperties?.parentTabId,
+        text: documentText(tab.documentTab?.body?.content),
+      });
+      walk(tab.childTabs);
+    }
+  };
+  walk(tabs);
+  return output;
 }
 
 const calendarId = z.string().optional().describe('Calendar ID; defaults to "primary".');
@@ -413,6 +410,53 @@ export function registerWorkspaceTools(server: McpServer): void {
           },
           media: { mimeType, body },
           fields: 'id,name,mimeType,size,parents,webViewLink',
+          supportsAllDrives: true,
+        })
+      );
+      return { account: ctx.alias, email: ctx.email, ...result.data };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+  );
+
+  register(
+    server,
+    'drive_import_presentation',
+    'Upload a PowerPoint or OpenDocument presentation and convert it to native Google Slides.',
+    {
+      account,
+      path: z
+        .string()
+        .describe('Absolute local path to a .ppt, .pptx, or .odp presentation.'),
+      title: z.string().describe('Title for the native Google Slides presentation.'),
+      parentId: z
+        .string()
+        .optional()
+        .describe('Destination folder ID; may be a shared-drive folder or shared-drive root ID. Defaults to the account\'s My Drive root.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const filePath = args.path as string;
+      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+        throw new Error(`No readable file at path: ${filePath}`);
+      }
+      const sourceMimeType = mimeTypeForFilename(filePath);
+      const acceptedSourceMimeTypes = new Set([
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/vnd.oasis.opendocument.presentation',
+      ]);
+      if (!acceptedSourceMimeTypes.has(sourceMimeType)) {
+        throw new Error('Presentation import requires a .ppt, .pptx, or .odp source file.');
+      }
+      const result = await callGoogle(ctx, 'import Google Slides presentation', () =>
+        ctx.drive.files.create({
+          requestBody: {
+            name: args.title,
+            mimeType: 'application/vnd.google-apps.presentation',
+            ...(args.parentId ? { parents: [args.parentId] } : {}),
+          },
+          media: { mimeType: sourceMimeType, body: fs.createReadStream(filePath) },
+          fields: 'id,name,mimeType,parents,webViewLink,createdTime,modifiedTime',
           supportsAllDrives: true,
         })
       );
@@ -918,14 +962,21 @@ export function registerWorkspaceTools(server: McpServer): void {
     async (args) => {
       const ctx = workspaceFor(args.account);
       const result = await callGoogle(ctx, 'get Google Doc', () =>
-        ctx.docs.documents.get({ documentId: documentId(args.document) })
+        ctx.docs.documents.get({
+          documentId: documentId(args.document),
+          includeTabsContent: true,
+        })
       );
+      const tabs = documentTabs(result.data.tabs);
       return {
         account: ctx.alias,
         email: ctx.email,
         documentId: result.data.documentId,
         title: result.data.title,
-        text: documentText(result.data.body?.content),
+        text: tabs.length
+          ? tabs.map((tab) => tab.text).filter(Boolean).join('\n\n')
+          : documentText(result.data.body?.content),
+        tabs,
       };
     },
     { readOnlyHint: true }

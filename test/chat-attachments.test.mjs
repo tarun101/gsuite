@@ -1,20 +1,16 @@
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import test from 'node:test';
 import {
-  cachedUploadsMatch,
   downloadFilename,
-  loadChatUploadState,
   MAX_CHAT_UPLOAD_BYTES,
-  messageFingerprint,
   prepareChatUpload,
   resolveAttachmentDownloadSource,
   resolveDriveExport,
-  saveChatUploadState,
   saveDownloadStream,
 } from '../dist/chat-attachments.js';
 
@@ -131,45 +127,5 @@ test('saveDownloadStream avoids overwrites, hashes bytes, and removes failed par
     assert.ok(!fs.existsSync(path.join(directory, 'oversize.txt')));
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test('Chat upload retry state is payload-bound and survives process restarts', async () => {
-  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsuite-chat-state-'));
-  const requestId = randomUUID();
-  try {
-    const upload = await prepareChatUpload({
-      filename: 'note.txt',
-      contentBase64: Buffer.from('note').toString('base64'),
-    });
-    const fingerprint = messageFingerprint({
-      space: 'spaces/AAA',
-      text: 'Attached',
-      attachments: [upload],
-    });
-    const state = {
-      version: 1,
-      account: 'work',
-      space: 'spaces/AAA',
-      requestId,
-      messageFingerprint: fingerprint,
-      attachments: [
-        {
-          filename: upload.filename,
-          mimeType: upload.mimeType,
-          size: upload.size,
-          sha256: upload.sha256,
-          attachmentDataRef: { attachmentUploadToken: 'opaque-token' },
-        },
-      ],
-      updatedAt: new Date().toISOString(),
-    };
-    saveChatUploadState(baseDir, state);
-    const reloaded = loadChatUploadState(baseDir, 'work', requestId);
-    assert.deepEqual(reloaded, state);
-    assert.equal(cachedUploadsMatch(reloaded, fingerprint, [upload]), true);
-    assert.equal(cachedUploadsMatch(reloaded, `${fingerprint}changed`, [upload]), false);
-  } finally {
-    fs.rmSync(baseDir, { recursive: true, force: true });
   }
 });

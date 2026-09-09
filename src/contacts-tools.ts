@@ -3,19 +3,9 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { people_v1 } from 'googleapis';
 import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
-
-type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
-type ToolAnnotations = {
-  readOnlyHint?: boolean;
-  destructiveHint?: boolean;
-  idempotentHint?: boolean;
-  openWorldHint?: boolean;
-};
+import { account, register } from './register.js';
 
 const MAX_RESULT_BYTES = 500_000;
-const account = z
-  .string()
-  .describe('Required account alias or exact email address, for example "personal" or "work".');
 const resourceName = z
   .string()
   .describe('Contact resource name, e.g. "people/c1234567890" (from contacts_list/contacts_search).');
@@ -24,32 +14,6 @@ const resourceName = z
 // updatePersonFields. Editable groups this server writes are the values here.
 const READ_PERSON_FIELDS =
   'names,emailAddresses,phoneNumbers,organizations,biographies,userDefined,metadata,memberships';
-
-const ok = (value: unknown): ToolResult => ({
-  content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1) }],
-});
-const fail = (error: unknown): ToolResult => ({
-  isError: true,
-  content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
-});
-
-function register(
-  server: McpServer,
-  name: string,
-  description: string,
-  inputSchema: z.ZodRawShape,
-  handler: (args: any) => Promise<unknown>,
-  annotations?: ToolAnnotations
-): void {
-  server.registerTool(name, { description, inputSchema, annotations }, async (args: any) => {
-    try {
-      return ok(await handler(args));
-    } catch (error) {
-      console.error(`gsuite ${name}:`, error instanceof Error ? error.message : error);
-      return fail(error);
-    }
-  });
-}
 
 async function callPeople<T>(
   ctx: WorkspaceContext,
@@ -133,7 +97,13 @@ function personFromArgs(args: any): { person: people_v1.Schema$Person; groups: s
     groups.push('biographies');
   }
   if (args.userDefined !== undefined) {
-    person.userDefined = args.userDefined;
+    // Google rejects userDefined entries whose value is an empty string with a
+    // generic INVALID_ARGUMENT response. Empty values are not meaningful
+    // custom fields; omit them. Callers that need to remove the whole group
+    // should use clear: ["userDefined"] instead.
+    person.userDefined = args.userDefined.filter(
+      (entry: { key: string; value: string }) => entry.value.length > 0
+    );
     groups.push('userDefined');
   }
   return { person, groups };

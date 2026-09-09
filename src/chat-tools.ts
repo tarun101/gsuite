@@ -2,67 +2,25 @@ import type { Readable } from 'node:stream';
 import { z } from 'zod';
 import type { chat_v1 } from 'googleapis';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { BASE_DIR } from './accounts.js';
 import {
-  cachedUploadsMatch,
   DEFAULT_CHAT_DOWNLOAD_MAX_BYTES,
   downloadFilename,
-  loadChatUploadState,
   MAX_CHAT_DOWNLOAD_BYTES,
-  messageFingerprint,
   prepareChatUpload,
   resolveAttachmentDownloadSource,
   resolveDriveExport,
-  saveChatUploadState,
   saveDownloadStream,
-  type ChatUploadState,
 } from './chat-attachments.js';
 import { callGmail } from './gmail.js';
 import { workspaceFor, type WorkspaceContext } from './workspace.js';
+import { account, register } from './register.js';
 
-type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
-type ToolAnnotations = {
-  readOnlyHint?: boolean;
-  destructiveHint?: boolean;
-  idempotentHint?: boolean;
-  openWorldHint?: boolean;
-};
-
-const account = z
-  .string()
-  .describe('Required account alias or exact email address, for example "personal" or "work".');
 const space = z
   .string()
   .describe('Google Chat space resource name from chat_list_spaces, for example "spaces/AAAA".');
 const message = z
   .string()
   .describe('Google Chat message resource name, for example "spaces/AAAA/messages/BBBB.BBBB".');
-const ok = (value: unknown): ToolResult => ({
-  content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1) }],
-});
-const fail = (error: unknown): ToolResult => ({
-  isError: true,
-  content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
-});
-
-function register(
-  server: McpServer,
-  name: string,
-  description: string,
-  inputSchema: z.ZodRawShape,
-  handler: (args: any) => Promise<unknown>,
-  annotations?: ToolAnnotations
-): void {
-  server.registerTool(name, { description, inputSchema, annotations }, async (args: any) => {
-    try {
-      return ok(await handler(args));
-    } catch (error) {
-      console.error(`gsuite ${name}:`, error instanceof Error ? error.message : error);
-      return fail(error);
-    }
-  });
-}
-
 async function callChat<T>(
   ctx: WorkspaceContext,
   operation: string,
@@ -437,7 +395,7 @@ export function registerChatTools(server: McpServer): void {
   register(
     server,
     'chat_send_message',
-    'Send a Google Chat message or threaded reply with text and/or file attachments as the selected user. Attachment sends require a requestId and reuse persisted upload references on retry. Only call after explicit user approval.',
+    'Send a Google Chat message or threaded reply with text and/or file attachments as the selected user. Attachment sends require a requestId for idempotent message creation. Only call after explicit user approval.',
     {
       account,
       space,
@@ -446,7 +404,11 @@ export function registerChatTools(server: McpServer): void {
         .string()
         .optional()
         .describe('Optional thread resource name returned by a message, e.g. spaces/AAAA/threads/BBBB.'),
-      requestId: z.string().uuid().optional().describe('Optional UUID for retry-safe message creation.'),
+      requestId: z
+        .string()
+        .uuid()
+        .optional()
+        .describe('Optional UUID for retry-safe message creation. Reuse it only with an identical request.'),
       attachments: z
         .array(
           z.object({
@@ -478,62 +440,21 @@ export function registerChatTools(server: McpServer): void {
       }
 
       const prepared = await Promise.all(attachmentInputs.map(prepareChatUpload));
-      let uploadState: ChatUploadState | undefined;
-      if (prepared.length > 0) {
-        const fingerprint = messageFingerprint({
-          space: parent,
-          text: args.text,
-          thread: args.thread,
-          attachments: prepared,
-        });
-        uploadState = loadChatUploadState(BASE_DIR, ctx.alias, args.requestId);
-        if (uploadState && !cachedUploadsMatch(uploadState, fingerprint, prepared)) {
-          throw new Error(
-            'requestId was already used with a different Chat message or attachment set; use a new UUID.'
-          );
+      const attachmentRefs: Array<{ attachmentDataRef: chat_v1.Schema$AttachmentDataRef }> = [];
+      for (const [index, item] of prepared.entries()) {
+        const uploaded = await callChat(ctx, `upload Chat attachment ${index + 1}`, () =>
+          ctx.chat.media.upload({
+            parent,
+            requestBody: { filename: item.filename },
+            media: { mimeType: item.mimeType, body: item.openBody() },
+          })
+        );
+        const attachmentDataRef = uploaded.data.attachmentDataRef;
+        if (!attachmentDataRef?.attachmentUploadToken && !attachmentDataRef?.resourceName) {
+          throw new Error(`Chat upload ${index + 1} returned no attachment data reference.`);
         }
-        if (!uploadState) {
-          uploadState = {
-            version: 1,
-            account: ctx.alias,
-            space: parent,
-            requestId: args.requestId,
-            messageFingerprint: fingerprint,
-            attachments: prepared.map(({ filename, mimeType, size, sha256 }) => ({
-              filename,
-              mimeType,
-              size,
-              sha256,
-            })),
-            updatedAt: new Date().toISOString(),
-          };
-          saveChatUploadState(BASE_DIR, uploadState);
-        }
-
-        for (let index = 0; index < prepared.length; index++) {
-          if (uploadState.attachments[index].attachmentDataRef) continue;
-          const item = prepared[index];
-          const uploaded = await callChat(ctx, `upload Chat attachment ${index + 1}`, () =>
-            ctx.chat.media.upload({
-              parent,
-              requestBody: { filename: item.filename },
-              media: { mimeType: item.mimeType, body: item.openBody() },
-            })
-          );
-          const ref = uploaded.data.attachmentDataRef;
-          if (!ref?.attachmentUploadToken && !ref?.resourceName) {
-            throw new Error(`Chat upload ${index + 1} returned no attachment data reference.`);
-          }
-          uploadState.attachments[index].attachmentDataRef = ref;
-          uploadState.updatedAt = new Date().toISOString();
-          saveChatUploadState(BASE_DIR, uploadState);
-        }
+        attachmentRefs.push({ attachmentDataRef });
       }
-
-      const attachmentRefs = uploadState?.attachments.map((item) => {
-        if (!item.attachmentDataRef) throw new Error(`Missing uploaded reference for ${item.filename}.`);
-        return { attachmentDataRef: item.attachmentDataRef };
-      });
       const result = await callChat(ctx, 'send Chat message', () =>
         ctx.chat.spaces.messages.create({
           parent,
@@ -542,26 +463,23 @@ export function registerChatTools(server: McpServer): void {
           requestBody: {
             ...(args.text ? { text: args.text } : {}),
             ...(args.thread ? { thread: { name: args.thread } } : {}),
-            ...(attachmentRefs?.length ? { attachment: attachmentRefs } : {}),
+            ...(attachmentRefs.length ? { attachment: attachmentRefs } : {}),
           },
         })
       );
-      if (uploadState) {
-        uploadState.messageName = result.data.name ?? undefined;
-        uploadState.updatedAt = new Date().toISOString();
-        saveChatUploadState(BASE_DIR, uploadState);
-      }
       return {
         account: ctx.alias,
         email: ctx.email,
         sent: true,
         attachmentCount: prepared.length,
-        attachments: uploadState?.attachments.map(({ filename, mimeType, size, sha256 }) => ({
-          filename,
-          mimeType,
-          size,
-          sha256,
-        })),
+        attachments: prepared.length
+          ? prepared.map(({ filename, mimeType, size, sha256 }) => ({
+              filename,
+              mimeType,
+              size,
+              sha256,
+            }))
+          : undefined,
         message: shapeMessage(result.data),
       };
     },

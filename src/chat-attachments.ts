@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { chat_v1 } from 'googleapis';
 import { mimeTypeForFilename } from './drive-upload.js';
 
 export const DEFAULT_CHAT_DOWNLOAD_MAX_BYTES = 200 * 1024 * 1024;
@@ -24,25 +23,6 @@ export interface PreparedChatUpload {
   size: number;
   sha256: string;
   openBody: () => Readable;
-}
-
-export interface CachedChatUpload {
-  filename: string;
-  mimeType: string;
-  size: number;
-  sha256: string;
-  attachmentDataRef?: chat_v1.Schema$AttachmentDataRef;
-}
-
-export interface ChatUploadState {
-  version: 1;
-  account: string;
-  space: string;
-  requestId: string;
-  messageFingerprint: string;
-  attachments: CachedChatUpload[];
-  messageName?: string;
-  updatedAt: string;
 }
 
 interface DriveExportChoice {
@@ -259,72 +239,4 @@ export async function saveDownloadStream(
     }
     throw error;
   }
-}
-
-export function messageFingerprint(input: {
-  space: string;
-  text?: string;
-  thread?: string;
-  attachments: Array<Pick<PreparedChatUpload, 'filename' | 'mimeType' | 'size' | 'sha256'>>;
-}): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify({
-        space: input.space,
-        text: input.text ?? null,
-        thread: input.thread ?? null,
-        attachments: input.attachments.map(({ filename, mimeType, size, sha256 }) => ({
-          filename,
-          mimeType,
-          size,
-          sha256,
-        })),
-      })
-    )
-    .digest('hex');
-}
-
-function uploadStatePath(baseDir: string, account: string, requestId: string): string {
-  const safeAccount = account.replace(/[^A-Za-z0-9_-]/g, '_');
-  return path.join(baseDir, 'chat-upload-state', safeAccount, `${requestId}.json`);
-}
-
-export function loadChatUploadState(
-  baseDir: string,
-  account: string,
-  requestId: string
-): ChatUploadState | undefined {
-  const file = uploadStatePath(baseDir, account, requestId);
-  if (!fs.existsSync(file)) return undefined;
-  const state = JSON.parse(fs.readFileSync(file, 'utf8')) as ChatUploadState;
-  if (state.version !== 1 || state.account !== account || state.requestId !== requestId) {
-    throw new Error(`Invalid Chat upload retry state at ${file}.`);
-  }
-  return state;
-}
-
-export function saveChatUploadState(baseDir: string, state: ChatUploadState): void {
-  const file = uploadStatePath(baseDir, state.account, state.requestId);
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const temp = `${file}.${randomUUID()}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(temp, file);
-}
-
-export function cachedUploadsMatch(
-  state: ChatUploadState,
-  fingerprint: string,
-  uploads: PreparedChatUpload[]
-): boolean {
-  return (
-    state.messageFingerprint === fingerprint &&
-    state.attachments.length === uploads.length &&
-    state.attachments.every(
-      (cached, index) =>
-        cached.filename === uploads[index].filename &&
-        cached.mimeType === uploads[index].mimeType &&
-        cached.size === uploads[index].size &&
-        cached.sha256 === uploads[index].sha256
-    )
-  );
 }

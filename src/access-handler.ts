@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import type { AuthRequest, OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { handleUploadRequest } from './upload-endpoint.js';
+import { handleDriveDownloadRequest } from './drive-download-endpoint.js';
 
 type AccessEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
 type StoredState = { request: AuthRequest; verifier: string };
@@ -108,6 +109,11 @@ async function verifyAccessIdToken(env: AccessEnv, token: string): Promise<{ ema
 export async function handleAccessRequest(request: Request, env: AccessEnv): Promise<Response> {
   const url = new URL(request.url);
   try {
+    // Single-use bearer tickets are issued only by the authenticated MCP action.
+    // This route never accepts file/account parameters and never returns JSON file content.
+    const download = await handleDriveDownloadRequest(request, env);
+    if (download) return download;
+
     // Bearer-token file upload, so bytes reach Drive without going through an
     // MCP client. Returns null when the route does not apply.
     const upload = await handleUploadRequest(request, env);

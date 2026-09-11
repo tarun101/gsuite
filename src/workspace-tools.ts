@@ -14,6 +14,7 @@ import { uploadToDrive } from './drive-transfer.js';
 import { aggregateAvailability, chunkCalendarIds, type CalendarFreeBusy } from './calendar-availability.js';
 import { account, register } from './register.js';
 import { needsRecurrenceTimeZone, normalizeRecurrence, shapeEvent } from './calendar-events.js';
+import { registerDriveDownloadTool, type DriveDownloadToolDependencies } from './drive-download-tool.js';
 
 async function callGoogle<T>(
   ctx: WorkspaceContext,
@@ -149,7 +150,10 @@ function eventTime(value: string, timeZone?: string): { date?: string; dateTime?
   return { dateTime: new Date(value).toISOString(), ...(timeZone ? { timeZone } : {}) };
 }
 
-export function registerWorkspaceTools(server: McpServer): void {
+export function registerWorkspaceTools(
+  server: McpServer,
+  options: { driveDownload?: DriveDownloadToolDependencies } = {},
+): void {
   // Sheets
   register(
     server,
@@ -449,6 +453,8 @@ export function registerWorkspaceTools(server: McpServer): void {
     },
     { readOnlyHint: true }
   );
+
+  if (isRemote()) registerDriveDownloadTool(server, options.driveDownload);
 
   // Writes into ~/Downloads, so it only means anything when the server runs on
   // the caller's machine. The remote build does not advertise it at all rather

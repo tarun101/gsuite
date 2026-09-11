@@ -1,0 +1,10 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "gsuite-drive-ticket-test",
+  "main": "drive-ticket-worker.ts",
+  "compatibility_date": "2026-08-20",
+  "durable_objects": {
+    "bindings": [{ "name": "DRIVE_TICKETS", "class_name": "DriveTicketBroker" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DriveTicketBroker"] }]
+}

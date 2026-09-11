@@ -13,5 +13,9 @@
     "sourceMap": false
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/access-handler.ts", "src/worker.ts"]
+  "exclude": [
+    "src/access-handler.ts",
+    "src/drive-ticket-broker.ts",
+    "src/worker.ts"
+  ]
 }

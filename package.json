@@ -8,16 +8,19 @@
     "node": ">=20"
   },
   "bin": {
-    "gsuite-upload": "dist/upload-cli.js"
+    "gsuite-upload": "dist/upload-cli.js",
+    "gsuite-download": "dist/download-cli.js"
   },
   "scripts": {
     "build": "tsc",
     "upload": "node dist/upload-cli.js",
+    "download": "node dist/download-cli.js",
     "bundle": "node scripts/bundle.mjs",
     "bundle:native": "esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=dist/gsuite-mcp.cjs && esbuild src/auth-cli.ts --bundle --platform=node --format=cjs --outfile=dist/auth.cjs",
     "auth": "tsx src/auth-cli.ts",
     "start": "node dist/index.js",
     "test": "npm run build && node --test test/*.test.mjs",
+    "test:drive-ticket-broker": "node test/drive-ticket-broker.integration.mjs",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
     "deploy": "wrangler deploy",
     "typecheck:worker": "tsc -p tsconfig.worker.json --noEmit",

@@ -169,6 +169,8 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     assert.equal(driveUpload.inputSchema.properties.path.type, 'string');
     assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
 
+    assert.equal(tools.find((tool) => tool.name === 'drive_issue_download_ticket'), undefined);
+
     const driveImportPresentation = tools.find((tool) => tool.name === 'drive_import_presentation');
     assert.equal(driveImportPresentation.annotations?.readOnlyHint, false);
     assert.equal(driveImportPresentation.annotations?.destructiveHint, false);
@@ -244,6 +246,14 @@ test('the remote build only advertises tools it can actually run', async () => {
     assert.equal(driveUpload.inputSchema.properties.path, undefined);
     assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
     assert.ok(!/local file/.test(driveUpload.description));
+
+    const driveTicket = tools.find((tool) => tool.name === 'drive_issue_download_ticket');
+    assert.ok(driveTicket, 'remote build must advertise cloud Drive download ticket issuance');
+    assert.equal(driveTicket.annotations?.readOnlyHint, false);
+    assert.ok(driveTicket.inputSchema.required.includes('account'));
+    assert.ok(driveTicket.inputSchema.required.includes('fileId'));
+    assert.ok(driveTicket.inputSchema.required.includes('expectedSha256'));
+    assert.equal(driveTicket.inputSchema.properties.expectedSha256.pattern, '^[A-Fa-f0-9]{64}$');
   } finally {
     await client.close();
     fs.rmSync(stateDir, { recursive: true, force: true });

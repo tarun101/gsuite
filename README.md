@@ -187,7 +187,10 @@ HTTP transport and Worker secrets instead of the local token directory. It inten
 local-path downloads and attachments, account provisioning, and the local scheduled-send loop.
 
 The remote build does not advertise the tools and parameters it cannot honor: `drive_download_file`
-is absent, and `drive_upload_file` offers no `path`.
+is absent, and `drive_upload_file` offers no `path`. Instead, its cloud download prototype issues a
+short-lived, single-use ticket and streams bytes to a downloader running in the cloud task. See
+[`docs/drive-cloud-download.md`](docs/drive-cloud-download.md) for its API, security model, deployment,
+and rollback procedure.
 
 The checked-in `wrangler.jsonc` describes the maintainer's private deployment. It contains
 deployment-specific Worker, KV, Cloudflare Access, allowed-user, and Google account settings; it is

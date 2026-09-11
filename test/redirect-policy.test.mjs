@@ -40,6 +40,45 @@ test('http loopback rule does not extend to https or to remote hosts', () => {
   assert.equal(redirectUriAllowed('http://127.0.0.2/cb', ALLOWED), false);
 });
 
+test('only the exact Routespring ChatGPT callback is allowed', () => {
+  const callback = 'https://chatgpt.com/connector/oauth/B9-y6O1lMTcV';
+  assert.equal(redirectUriAllowed(callback), true);
+  assert.equal(screenClientRegistration({ clientMetadata: { redirect_uris: [callback] } }), undefined);
+  for (const uri of [
+    'https://chatgpt.com',
+    'https://chatgpt.com/connector_platform_oauth_redirect',
+    'https://chatgpt.com/connector/oauth/another-connection',
+    `${callback}/`,
+    `${callback}?redirect=https://evil.example`,
+    `${callback}#fragment`,
+    'http://chatgpt.com/connector/oauth/B9-y6O1lMTcV',
+    'https://chatgpt.com:8443/connector/oauth/B9-y6O1lMTcV',
+    'https://chatgpt.com.evil.example/connector/oauth/B9-y6O1lMTcV',
+    'https://chatgpt.com@evil.example/connector/oauth/B9-y6O1lMTcV',
+    'https://user@chatgpt.com/connector/oauth/B9-y6O1lMTcV',
+    'https://chatgpt.com/connector/oauth/%429-y6O1lMTcV',
+  ]) {
+    assert.equal(redirectUriAllowed(uri), false, uri);
+    assert.equal(screenClientRegistration({ clientMetadata: { redirect_uris: [callback, uri] } })?.status, 403, uri);
+  }
+});
+
+test('existing Claude and Cursor callbacks remain allowed', () => {
+  for (const uri of [
+    'https://claude.ai/api/mcp/auth_callback',
+    'https://claude.com/api/mcp/auth_callback',
+    'https://www.cursor.com/agents/mcp/oauth/callback',
+    'cursor://anysphere.cursor-mcp/oauth/callback',
+  ]) assert.equal(redirectUriAllowed(uri), true, uri);
+});
+
+test('a supplied exact HTTPS callback does not allow other paths on its origin', () => {
+  const callback = 'https://example.com/exact-callback';
+  assert.equal(redirectUriAllowed(callback, [callback]), true);
+  assert.equal(redirectUriAllowed('https://example.com/other', [callback]), false);
+  assert.equal(redirectUriAllowed(`${callback}?next=other`, [callback]), false);
+});
+
 test('registration is refused when any single redirect URI fails', () => {
   const ok = screenClientRegistration({
     clientMetadata: { redirect_uris: ['http://127.0.0.1:5000/cb'] },

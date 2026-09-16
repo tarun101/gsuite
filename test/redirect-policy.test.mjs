@@ -69,6 +69,7 @@ test('existing Claude and Cursor callbacks remain allowed', () => {
     'https://claude.com/api/mcp/auth_callback',
     'https://www.cursor.com/agents/mcp/oauth/callback',
     'cursor://anysphere.cursor-mcp/oauth/callback',
+    'https://antigravity.google/oauth-callback',
   ]) assert.equal(redirectUriAllowed(uri), true, uri);
 });
 

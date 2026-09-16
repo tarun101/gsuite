@@ -21,6 +21,8 @@ export const ALLOWED_REDIRECT_URIS = [
   // Exact callback observed during Routespring GSuite registration in ChatGPT.
   // Do not allow the whole origin: a recreated connection needs its own URI.
   'https://chatgpt.com/connector/oauth/B9-y6O1lMTcV',
+  // Antigravity desktop OAuth callback.
+  'https://antigravity.google/oauth-callback',
 ];
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', '[::1]', 'localhost']);

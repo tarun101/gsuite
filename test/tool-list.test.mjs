@@ -24,6 +24,8 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'search_threads',
       'update_draft',
       'schedule_send',
+      'sheets_create_spreadsheet',
+      'sheets_add_tab',
       'sheets_read_range',
       'sheets_update_range',
       'sheets_delete_rows',
@@ -84,6 +86,29 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
         `sheets_delete_rows must require ${field}`
       );
     }
+
+    const createSpreadsheet = tools.find((tool) => tool.name === 'sheets_create_spreadsheet');
+    assert.equal(createSpreadsheet.annotations?.readOnlyHint, false);
+    assert.equal(createSpreadsheet.annotations?.destructiveHint, false);
+    assert.equal(createSpreadsheet.annotations?.idempotentHint, false);
+    for (const field of ['account', 'title']) {
+      assert.ok(
+        createSpreadsheet.inputSchema.required.includes(field),
+        `sheets_create_spreadsheet must require ${field}`
+      );
+    }
+
+    const addTab = tools.find((tool) => tool.name === 'sheets_add_tab');
+    assert.equal(addTab.annotations?.readOnlyHint, false);
+    assert.equal(addTab.annotations?.destructiveHint, false);
+    assert.equal(addTab.annotations?.idempotentHint, false);
+    for (const field of ['account', 'spreadsheet', 'title']) {
+      assert.ok(
+        addTab.inputSchema.required.includes(field),
+        `sheets_add_tab must require ${field}`
+      );
+    }
+    assert.equal(addTab.inputSchema.properties.index.type, 'integer');
 
     const sheetsHideRows = tools.find((tool) => tool.name === 'sheets_hide_rows');
     assert.equal(sheetsHideRows.annotations?.readOnlyHint, false);

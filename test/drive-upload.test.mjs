@@ -104,3 +104,9 @@ test('driveUploadUrl targets the upload endpoint with shared-drive support', () 
     assert.equal(url.searchParams.get('fields'), 'id,name');
   }
 });
+
+test('driveUploadUrl targets the exact file resource for an in-place replacement', () => {
+  const url = new URL(driveUploadUrl('resumable', 'id,size', 'file_id-123'));
+  assert.equal(url.pathname, '/upload/drive/v3/files/file_id-123');
+  assert.equal(url.searchParams.get('uploadType'), 'resumable');
+});

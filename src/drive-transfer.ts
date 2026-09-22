@@ -10,7 +10,7 @@ import type { OAuth2Client } from './accounts.js';
 import { buildMultipartRelatedBody, driveUploadUrl } from './drive-upload.js';
 
 /** Fields returned for an uploaded file. */
-export const DRIVE_UPLOAD_FIELDS = 'id,name,mimeType,size,parents,webViewLink';
+export const DRIVE_UPLOAD_FIELDS = 'id,name,mimeType,size,parents,webViewLink,sha256Checksum,md5Checksum,version';
 
 /**
  * Above this, use a resumable session instead of a multipart body. Google
@@ -24,6 +24,16 @@ export interface DriveUpload {
   metadata: Record<string, unknown>;
   mimeType: string;
   data: Uint8Array;
+  /** Existing file to replace in place. Omit to create a new Drive file. */
+  fileId?: string;
+}
+
+export interface DriveStreamUpload {
+  metadata: Record<string, unknown>;
+  mimeType: string;
+  byteSize: number;
+  body: ReadableStream<Uint8Array>;
+  fileId?: string;
 }
 
 export type DriveFile = Record<string, unknown> & { id?: string; name?: string; size?: string };
@@ -55,8 +65,8 @@ async function multipartUpload(auth: OAuth2Client, upload: DriveUpload): Promise
     mimeType: upload.mimeType,
     data: upload.data,
   });
-  const response = await fetch(driveUploadUrl('multipart', DRIVE_UPLOAD_FIELDS), {
-    method: 'POST',
+  const response = await fetch(driveUploadUrl('multipart', DRIVE_UPLOAD_FIELDS, upload.fileId), {
+    method: upload.fileId ? 'PATCH' : 'POST',
     headers: {
       authorization: await bearer(auth),
       'content-type': contentType,
@@ -73,8 +83,8 @@ async function multipartUpload(auth: OAuth2Client, upload: DriveUpload): Promise
 
 async function resumableUpload(auth: OAuth2Client, upload: DriveUpload): Promise<DriveFile> {
   const authorization = await bearer(auth);
-  const start = await fetch(driveUploadUrl('resumable', DRIVE_UPLOAD_FIELDS), {
-    method: 'POST',
+  const start = await fetch(driveUploadUrl('resumable', DRIVE_UPLOAD_FIELDS, upload.fileId), {
+    method: upload.fileId ? 'PATCH' : 'POST',
     headers: {
       authorization,
       'content-type': 'application/json; charset=UTF-8',
@@ -106,4 +116,45 @@ export async function uploadToDrive(auth: OAuth2Client, upload: DriveUpload): Pr
   return upload.data.length > RESUMABLE_THRESHOLD_BYTES
     ? resumableUpload(auth, upload)
     : multipartUpload(auth, upload);
+}
+
+/** Stream one exact-length body through a Drive resumable session without buffering it in the Worker. */
+export async function uploadStreamToDrive(auth: OAuth2Client, upload: DriveStreamUpload): Promise<DriveFile> {
+  const authorization = await bearer(auth);
+  const start = await fetch(driveUploadUrl('resumable', DRIVE_UPLOAD_FIELDS, upload.fileId), {
+    method: upload.fileId ? 'PATCH' : 'POST',
+    headers: {
+      authorization,
+      'content-type': 'application/json; charset=UTF-8',
+      'x-upload-content-type': upload.mimeType,
+      'x-upload-content-length': String(upload.byteSize),
+    },
+    body: JSON.stringify(upload.metadata),
+  });
+  if (!start.ok) throw await driveFailure(start, 'Drive refused to start the upload session');
+  const session = start.headers.get('location');
+  if (!session) throw new Error('Drive started an upload session without a session URL.');
+
+  const FixedLength = (globalThis as unknown as {
+    FixedLengthStream: new (length: number) => TransformStream<Uint8Array, Uint8Array>;
+  }).FixedLengthStream;
+  if (!FixedLength) throw new Error('Streaming uploads require the Cloudflare Workers runtime.');
+  const fixed = new FixedLength(upload.byteSize);
+  const pumping = upload.body.pipeTo(fixed.writable);
+  let response: Response;
+  try {
+    response = await fetch(session, {
+      method: 'PUT',
+      headers: { authorization, 'content-type': upload.mimeType },
+      body: fixed.readable,
+    });
+    await pumping;
+  } catch (error) {
+    try { await fixed.readable.cancel('upload interrupted'); } catch { /* terminal failure */ }
+    throw error;
+  }
+  if (!response.ok) throw await driveFailure(response, 'Drive rejected the uploaded content');
+  const result = (await response.json()) as DriveFile;
+  if (upload.fileId && result.id !== upload.fileId) throw new Error('Drive returned a different file ID after replacement.');
+  return result;
 }

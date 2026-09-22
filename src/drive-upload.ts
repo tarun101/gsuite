@@ -109,7 +109,12 @@ export function buildMultipartRelatedBody(
 }
 
 /** Drive's upload endpoint, with the query Drive needs for shared drives. */
-export function driveUploadUrl(uploadType: 'multipart' | 'resumable', fields: string): string {
+export function driveUploadUrl(
+  uploadType: 'multipart' | 'resumable',
+  fields: string,
+  fileId?: string,
+): string {
   const params = new URLSearchParams({ uploadType, supportsAllDrives: 'true', fields });
-  return `https://www.googleapis.com/upload/drive/v3/files?${params}`;
+  const target = fileId ? `/drive/v3/files/${encodeURIComponent(fileId)}` : '/drive/v3/files';
+  return `https://www.googleapis.com/upload${target}?${params}`;
 }

@@ -1,12 +1,10 @@
 # Cloud Drive download prototype
 
-This prototype moves one ordinary Drive blob directly from Google, through the existing Worker,
+This feature moves one ordinary Drive blob, Google Workspace export, Gmail attachment, or Chat attachment directly from Google, through the existing Worker,
 into a task-scoped temporary directory. MCP returns only a 90-second ticket and expected metadata;
 it never returns file bytes or base64. The ticket itself is visible to the MCP client and model.
 
-Google-native Docs, Sheets, Slides, shortcuts, and folders are rejected. Their export bytes are not
-immutably identified by Drive's blob `headRevisionId` and SHA-256 fields, so export needs a separate
-approved design.
+Google-native Docs, Sheets, and Slides use `drive_issue_export_download_ticket` with an explicit export MIME type. Gmail and Chat have corresponding attachment-ticket tools. Every ticket stays bound to one account and exact source; endpoints accept neither account nor source parameters.
 
 ## API
 
@@ -30,6 +28,19 @@ backpressure and a 30-second limit.
 The head revision and SHA-256, not `modifiedTime`, bind the authorized content version. The
 downloader independently hashes the delivered stream and does not rename the private partial file
 to its final name until both exact size and trusted SHA-256 match.
+
+Exports and Gmail/Chat attachments redeem at `/cloud/download`; their output is bounded to 100 MiB by default. Google does not provide a pre-generation checksum for an export, so callers needing an integrity value should hash the downloaded output.
+
+## Cloud uploads
+
+Call `drive_issue_upload_ticket` with exact `byteSize`, SHA-256, MIME type, and filename. Pass `fileId` instead of `parentId` to replace an existing Drive file while retaining its ID. Then stream the file without putting its bytes in MCP:
+
+```bash
+curl --fail-with-body --upload-file "$FILE" \
+  -H "Authorization: Bearer $TICKET" -H "Content-Type: $MIME_TYPE" "$UPLOAD_URL"
+```
+
+The Worker accepts only the raw body and ticket, streams it through Drive's resumable upload API, requires the exact declared length, and verifies Drive's SHA-256 response. The default cap is 100 MiB.
 
 ## Downloader
 

@@ -165,11 +165,13 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
 
     const driveUpload = tools.find((tool) => tool.name === 'drive_upload_file');
     assert.equal(driveUpload.annotations?.readOnlyHint, false);
-    assert.ok(driveUpload.inputSchema.required.includes('filename'));
+    assert.ok(!(driveUpload.inputSchema.required ?? []).includes('filename'));
+    assert.equal(driveUpload.inputSchema.properties.fileId.type, 'string');
     assert.equal(driveUpload.inputSchema.properties.path.type, 'string');
     assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
 
     assert.equal(tools.find((tool) => tool.name === 'drive_issue_download_ticket'), undefined);
+    assert.equal(tools.find((tool) => tool.name === 'drive_issue_upload_ticket'), undefined);
 
     const driveImportPresentation = tools.find((tool) => tool.name === 'drive_import_presentation');
     assert.equal(driveImportPresentation.annotations?.readOnlyHint, false);
@@ -254,6 +256,27 @@ test('the remote build only advertises tools it can actually run', async () => {
     assert.ok(driveTicket.inputSchema.required.includes('fileId'));
     assert.ok(driveTicket.inputSchema.required.includes('expectedSha256'));
     assert.equal(driveTicket.inputSchema.properties.expectedSha256.pattern, '^[A-Fa-f0-9]{64}$');
+
+    const uploadTicket = tools.find((tool) => tool.name === 'drive_issue_upload_ticket');
+    assert.ok(uploadTicket, 'remote build must advertise cloud Drive upload ticket issuance');
+    assert.equal(uploadTicket.annotations?.readOnlyHint, false);
+    assert.ok(uploadTicket.inputSchema.required.includes('account'));
+    assert.ok(uploadTicket.inputSchema.required.includes('byteSize'));
+    assert.ok(uploadTicket.inputSchema.required.includes('sha256'));
+    assert.match(uploadTicket.description, /20 KB/);
+
+    for (const name of [
+      'drive_issue_export_download_ticket',
+      'gmail_issue_attachment_download_ticket',
+      'chat_issue_attachment_download_ticket',
+    ]) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      assert.ok(tool, `${name} must be available remotely`);
+      assert.equal(tool.annotations?.readOnlyHint, false);
+      assert.ok(tool.inputSchema.required.includes('account'));
+      assert.ok(tool.inputSchema.required.includes('filename'));
+      assert.ok(tool.inputSchema.required.includes('mimeType'));
+    }
   } finally {
     await client.close();
     fs.rmSync(stateDir, { recursive: true, force: true });

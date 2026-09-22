@@ -7,11 +7,13 @@ import { registerChatTools } from './chat-tools.js';
 import { registerDriveCollabTools } from './drive-collab-tools.js';
 import { registerContactsTools } from './contacts-tools.js';
 import { registerSlidesTools } from './slides-tools.js';
+import { registerCloudDownloadTools } from './cloud-download-tools.js';
 
 // stdout is the JSON-RPC channel — all diagnostics must go to stderr (console.error).
 const server = new McpServer({ name: 'gsuite', version: '0.6.1' });
 registerTools(server);
 registerWorkspaceTools(server);
+if (process.env.GSUITE_REMOTE) registerCloudDownloadTools(server);
 registerChatTools(server);
 registerDriveCollabTools(server);
 registerContactsTools(server);

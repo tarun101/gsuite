@@ -19,6 +19,7 @@
   "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "893b5c9d45714d398721a2c6856d67ae" }],
   "vars": {
     "GSUITE_REMOTE": "1",
+    "DRIVE_TRANSFER_MAX_BYTES": "104857600",
     "GSUITE_MCP_DIR": "/tmp/gsuite-mcp",
     "ALLOWED_EMAIL": "i@tarun.me",
     "DRIVE_DOWNLOAD_URL": "https://gsuite-mcp.tarun-me.workers.dev/drive/download",

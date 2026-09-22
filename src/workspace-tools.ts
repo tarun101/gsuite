@@ -158,6 +158,87 @@ export function registerWorkspaceTools(
   // Sheets
   register(
     server,
+    'sheets_create_spreadsheet',
+    'Create a new blank Google Sheets spreadsheet with its default first tab.',
+    {
+      account,
+      title: z.string().min(1).max(100).describe('Title for the new spreadsheet.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const result = await callGoogle(ctx, 'create spreadsheet', () =>
+        ctx.sheets.spreadsheets.create({
+          requestBody: { properties: { title: args.title } },
+          fields:
+            'spreadsheetId,spreadsheetUrl,properties.title,sheets.properties(sheetId,title,index,gridProperties(rowCount,columnCount))',
+        })
+      );
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        spreadsheetId: result.data.spreadsheetId,
+        spreadsheetUrl: result.data.spreadsheetUrl,
+        title: result.data.properties?.title,
+        sheets: (result.data.sheets ?? []).map((sheet) => ({
+          sheetId: sheet.properties?.sheetId,
+          title: sheet.properties?.title,
+          index: sheet.properties?.index,
+          rows: sheet.properties?.gridProperties?.rowCount,
+          columns: sheet.properties?.gridProperties?.columnCount,
+        })),
+      };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
+  );
+
+  register(
+    server,
+    'sheets_add_tab',
+    'Add a named tab to an existing Google Sheets spreadsheet.',
+    {
+      account,
+      spreadsheet: z.string(),
+      title: z.string().min(1).max(100).describe('Title for the new tab.'),
+      index: z.number().int().nonnegative().optional().describe('Zero-based tab position; omit to append.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const id = spreadsheetId(args.spreadsheet);
+      const result = await callGoogle(ctx, 'add spreadsheet tab', () =>
+        ctx.sheets.spreadsheets.batchUpdate({
+          spreadsheetId: id,
+          requestBody: {
+            requests: [
+              {
+                addSheet: {
+                  properties: {
+                    title: args.title,
+                    ...(args.index === undefined ? {} : { index: args.index }),
+                  },
+                },
+              },
+            ],
+          },
+          fields: 'spreadsheetId,replies.addSheet.properties(sheetId,title,index,gridProperties(rowCount,columnCount))',
+        })
+      );
+      const properties = result.data.replies?.[0]?.addSheet?.properties;
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        spreadsheetId: result.data.spreadsheetId ?? id,
+        sheetId: properties?.sheetId,
+        title: properties?.title,
+        index: properties?.index,
+        rows: properties?.gridProperties?.rowCount,
+        columns: properties?.gridProperties?.columnCount,
+      };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
+  );
+
+  register(
+    server,
     'sheets_get_metadata',
     'Get spreadsheet title and sheet/tab metadata.',
     { account, spreadsheet: z.string() },

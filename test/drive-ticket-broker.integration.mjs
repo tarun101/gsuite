@@ -18,9 +18,6 @@ const port = await new Promise((resolve, reject) => {
 });
 
 const env = { ...process.env };
-if (!env.ESBUILD_BINARY_PATH && fs.existsSync('/opt/homebrew/bin/esbuild')) {
-  env.ESBUILD_BINARY_PATH = '/opt/homebrew/bin/esbuild';
-}
 const child = spawn('wrangler', [
   'dev',
   '--config', 'test/wrangler.drive-ticket.jsonc',
@@ -98,6 +95,28 @@ try {
     body: JSON.stringify({ shard: 'ticket-shard-cc', ticketHash: expiredHash, now }),
   }).then((response) => response.json());
   assert.deepEqual(expired, { ok: false, reason: 'expired', transferId: 'expired-transfer' });
+
+  const upload = {
+    transferId: 'upload-transfer',
+    operation: 'drive.upload',
+    requester: 'requester@example.test',
+    accountAlias: 'personal',
+    accountEmail: 'personal@example.test',
+    filename: 'fixture.bin',
+    mimeType: 'application/octet-stream',
+    byteSize: 5 * 1024 * 1024,
+    sha256: 'd'.repeat(64),
+    issuedAt: now,
+    expiresAt: now + 60_000,
+  };
+  const uploadHash = 'd'.repeat(64);
+  assert.deepEqual(await post('/issue-upload', { ticketHash: uploadHash, uploadRecord: upload }), { ok: true });
+  const uploadConcurrent = await Promise.all([
+    post('/consume-upload', { ticketHash: uploadHash, now: now + 1 }),
+    post('/consume-upload', { ticketHash: uploadHash, now: now + 1 }),
+  ]);
+  assert.equal(uploadConcurrent.filter((result) => result.ok).length, 1);
+  assert.equal(uploadConcurrent.filter((result) => result.reason === 'unknown_or_replayed').length, 1);
   process.stdout.write('Durable Object replay, concurrent consume, and expiry checks passed.\n');
 } finally {
   child.kill('SIGTERM');

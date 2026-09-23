@@ -170,7 +170,18 @@ failure is recorded and is not retried automatically, which reduces duplicate-se
 ## Uploading files to Drive
 
 `drive_upload_file` takes inline base64 content, which means the whole file travels through the MCP
-client's context. For anything larger than a small file, use the `gsuite-upload` command instead:
+client's context. For anything larger than roughly 20 KB in a cloud session, use
+`drive_issue_upload_ticket`: it returns a five-minute, single-use URL and bearer ticket, so curl
+streams the local bytes directly to the Worker. Supplying `fileId` replaces that file in place and
+retains its Drive ID. The local server still accepts `path`, and small inline uploads still work.
+
+```bash
+# Call drive_issue_upload_ticket first, using byteSize and sha256 from the local file.
+curl --fail-with-body --upload-file "$FILE" \
+  -H "Authorization: Bearer $TICKET" -H "Content-Type: $MIME_TYPE" "$UPLOAD_URL"
+```
+
+For a locally-run server, use the `gsuite-upload` command instead:
 it reads from disk and prints only the resulting Drive metadata, so the bytes never enter a
 conversation.
 
@@ -187,8 +198,9 @@ HTTP transport and Worker secrets instead of the local token directory. It inten
 local-path downloads and attachments, account provisioning, and the local scheduled-send loop.
 
 The remote build does not advertise the tools and parameters it cannot honor: `drive_download_file`
-is absent, and `drive_upload_file` offers no `path`. Instead, its cloud download prototype issues a
-short-lived, single-use ticket and streams bytes to a downloader running in the cloud task. See
+is absent, and `drive_upload_file` offers no `path`. It issues short-lived, single-use tickets for
+Drive blobs, Workspace exports, Gmail attachments, and Chat attachments. Redeem one with
+`curl --fail-with-body -o "$FILE" -H "Authorization: Bearer $TICKET" "$DOWNLOAD_URL"`. See
 [`docs/drive-cloud-download.md`](docs/drive-cloud-download.md) for its API, security model, deployment,
 and rollback procedure.
 

@@ -1,5 +1,15 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { DriveDownloadTicketRecord, TicketConsumeResult } from './drive-download-ticket.js';
+import {
+  validateDriveUploadTicket,
+  type DriveUploadTicketRecord,
+  type UploadTicketConsumeResult,
+} from './drive-upload-ticket.js';
+import {
+  validateCloudDownloadTicket,
+  type CloudDownloadConsumeResult,
+  type CloudDownloadTicketRecord,
+} from './cloud-download-ticket.js';
 
 type TicketRow = {
   transfer_id: string;
@@ -64,6 +74,21 @@ export class DriveTicketBroker extends DurableObject<Env> {
           consumed_at INTEGER
         );
         CREATE INDEX IF NOT EXISTS download_tickets_expiry ON download_tickets(expires_at);
+        CREATE TABLE IF NOT EXISTS upload_tickets (
+          ticket_hash TEXT PRIMARY KEY,
+          transfer_id TEXT NOT NULL,
+          record_json TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          consumed_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS upload_tickets_expiry ON upload_tickets(expires_at);
+        CREATE TABLE IF NOT EXISTS cloud_download_tickets (
+          ticket_hash TEXT PRIMARY KEY,
+          transfer_id TEXT NOT NULL,
+          record_json TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          consumed_at INTEGER
+        );
       `);
     });
   }
@@ -121,6 +146,61 @@ export class DriveTicketBroker extends DurableObject<Env> {
       );
       return { ok: false, reason: 'expired', transferId: existing.transfer_id };
     }
+    return { ok: false, reason: 'unknown_or_replayed', transferId: existing?.transfer_id };
+  }
+
+  async issueUpload(ticketHash: string, record: DriveUploadTicketRecord): Promise<void> {
+    validateDriveUploadTicket(record);
+    if (!/^[a-f0-9]{64}$/.test(ticketHash)) throw new Error('Invalid ticket hash.');
+    this.ctx.storage.sql.exec(
+      `INSERT INTO upload_tickets (ticket_hash, transfer_id, record_json, expires_at)
+       VALUES (?, ?, ?, ?)`,
+      ticketHash,
+      record.transferId,
+      JSON.stringify(record),
+      record.expiresAt,
+    );
+  }
+
+  async consumeUpload(ticketHash: string, now: number): Promise<UploadTicketConsumeResult> {
+    if (!/^[a-f0-9]{64}$/.test(ticketHash)) return { ok: false, reason: 'unknown_or_replayed' };
+    const claimed = this.ctx.storage.sql.exec<{ record_json: string }>(
+      `UPDATE upload_tickets SET consumed_at = ?
+       WHERE ticket_hash = ? AND consumed_at IS NULL AND expires_at > ?
+       RETURNING record_json`,
+      now,
+      ticketHash,
+      now,
+    ).toArray()[0];
+    if (claimed) return { ok: true, record: JSON.parse(claimed.record_json) as DriveUploadTicketRecord };
+    const existing = this.ctx.storage.sql.exec<{ transfer_id: string; expires_at: number; consumed_at: number | null }>(
+      'SELECT transfer_id, expires_at, consumed_at FROM upload_tickets WHERE ticket_hash = ?',
+      ticketHash,
+    ).toArray()[0];
+    if (existing?.consumed_at === null && existing.expires_at <= now) {
+      return { ok: false, reason: 'expired', transferId: existing.transfer_id };
+    }
+    return { ok: false, reason: 'unknown_or_replayed', transferId: existing?.transfer_id };
+  }
+
+  async issueCloudDownload(ticketHash: string, record: CloudDownloadTicketRecord): Promise<void> {
+    validateCloudDownloadTicket(record);
+    this.ctx.storage.sql.exec(
+      `INSERT INTO cloud_download_tickets (ticket_hash, transfer_id, record_json, expires_at)
+       VALUES (?, ?, ?, ?)`, ticketHash, record.transferId, JSON.stringify(record), record.expiresAt,
+    );
+  }
+
+  async consumeCloudDownload(ticketHash: string, now: number): Promise<CloudDownloadConsumeResult> {
+    const claimed = this.ctx.storage.sql.exec<{ record_json: string }>(
+      `UPDATE cloud_download_tickets SET consumed_at = ?
+       WHERE ticket_hash = ? AND consumed_at IS NULL AND expires_at > ? RETURNING record_json`, now, ticketHash, now,
+    ).toArray()[0];
+    if (claimed) return { ok: true, record: JSON.parse(claimed.record_json) as CloudDownloadTicketRecord };
+    const existing = this.ctx.storage.sql.exec<{ transfer_id: string; expires_at: number; consumed_at: number | null }>(
+      'SELECT transfer_id, expires_at, consumed_at FROM cloud_download_tickets WHERE ticket_hash = ?', ticketHash,
+    ).toArray()[0];
+    if (existing?.consumed_at === null && existing.expires_at <= now) return { ok: false, reason: 'expired', transferId: existing.transfer_id };
     return { ok: false, reason: 'unknown_or_replayed', transferId: existing?.transfer_id };
   }
 }

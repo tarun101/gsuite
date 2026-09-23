@@ -15,6 +15,7 @@ import { aggregateAvailability, chunkCalendarIds, type CalendarFreeBusy } from '
 import { account, register } from './register.js';
 import { needsRecurrenceTimeZone, normalizeRecurrence, shapeEvent } from './calendar-events.js';
 import { registerDriveDownloadTool, type DriveDownloadToolDependencies } from './drive-download-tool.js';
+import { registerDriveUploadTicketTool, type DriveUploadTicketToolDependencies } from './drive-upload-ticket-tool.js';
 
 async function callGoogle<T>(
   ctx: WorkspaceContext,
@@ -152,9 +153,90 @@ function eventTime(value: string, timeZone?: string): { date?: string; dateTime?
 
 export function registerWorkspaceTools(
   server: McpServer,
-  options: { driveDownload?: DriveDownloadToolDependencies } = {},
+  options: { driveDownload?: DriveDownloadToolDependencies; driveUploadTicket?: DriveUploadTicketToolDependencies } = {},
 ): void {
   // Sheets
+  register(
+    server,
+    'sheets_create_spreadsheet',
+    'Create a new blank Google Sheets spreadsheet with its default first tab.',
+    {
+      account,
+      title: z.string().min(1).max(100).describe('Title for the new spreadsheet.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const result = await callGoogle(ctx, 'create spreadsheet', () =>
+        ctx.sheets.spreadsheets.create({
+          requestBody: { properties: { title: args.title } },
+          fields:
+            'spreadsheetId,spreadsheetUrl,properties.title,sheets.properties(sheetId,title,index,gridProperties(rowCount,columnCount))',
+        })
+      );
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        spreadsheetId: result.data.spreadsheetId,
+        spreadsheetUrl: result.data.spreadsheetUrl,
+        title: result.data.properties?.title,
+        sheets: (result.data.sheets ?? []).map((sheet) => ({
+          sheetId: sheet.properties?.sheetId,
+          title: sheet.properties?.title,
+          index: sheet.properties?.index,
+          rows: sheet.properties?.gridProperties?.rowCount,
+          columns: sheet.properties?.gridProperties?.columnCount,
+        })),
+      };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
+  );
+
+  register(
+    server,
+    'sheets_add_tab',
+    'Add a named tab to an existing Google Sheets spreadsheet.',
+    {
+      account,
+      spreadsheet: z.string(),
+      title: z.string().min(1).max(100).describe('Title for the new tab.'),
+      index: z.number().int().nonnegative().optional().describe('Zero-based tab position; omit to append.'),
+    },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const id = spreadsheetId(args.spreadsheet);
+      const result = await callGoogle(ctx, 'add spreadsheet tab', () =>
+        ctx.sheets.spreadsheets.batchUpdate({
+          spreadsheetId: id,
+          requestBody: {
+            requests: [
+              {
+                addSheet: {
+                  properties: {
+                    title: args.title,
+                    ...(args.index === undefined ? {} : { index: args.index }),
+                  },
+                },
+              },
+            ],
+          },
+          fields: 'spreadsheetId,replies.addSheet.properties(sheetId,title,index,gridProperties(rowCount,columnCount))',
+        })
+      );
+      const properties = result.data.replies?.[0]?.addSheet?.properties;
+      return {
+        account: ctx.alias,
+        email: ctx.email,
+        spreadsheetId: result.data.spreadsheetId ?? id,
+        sheetId: properties?.sheetId,
+        title: properties?.title,
+        index: properties?.index,
+        rows: properties?.gridProperties?.rowCount,
+        columns: properties?.gridProperties?.columnCount,
+      };
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
+  );
+
   register(
     server,
     'sheets_get_metadata',
@@ -454,7 +536,10 @@ export function registerWorkspaceTools(
     { readOnlyHint: true }
   );
 
-  if (isRemote()) registerDriveDownloadTool(server, options.driveDownload);
+  if (isRemote()) {
+    registerDriveDownloadTool(server, options.driveDownload);
+    registerDriveUploadTicketTool(server, options.driveUploadTicket);
+  }
 
   // Writes into ~/Downloads, so it only means anything when the server runs on
   // the caller's machine. The remote build does not advertise it at all rather
@@ -538,7 +623,11 @@ export function registerWorkspaceTools(
       : 'Upload a local file (or inline base64 content) to Google Drive.',
     {
       account,
-      filename: z.string().describe('Name for the file in Drive, e.g. "report.pdf".'),
+      filename: z.string().optional().describe('Name for a new file in Drive, e.g. "report.pdf". Omit with fileId to retain the existing name.'),
+      fileId: z
+        .string()
+        .optional()
+        .describe('Existing Drive file ID to replace in place. The file keeps this ID; omit to create a new file.'),
       // Reading from disk only means anything when the server runs on the same
       // machine as the caller. The deployed Worker has no filesystem, so the
       // remote build does not advertise `path` at all.
@@ -572,6 +661,7 @@ export function registerWorkspaceTools(
     },
     async (args) => {
       if (isRemote() && args.path) throw new Error('Remote uploads require inline base64 content; local paths are not accessible.');
+      if (!args.filename && !args.fileId) throw new Error('filename is required when creating a new Drive file.');
       const ctx = workspaceFor(args.account);
       const source = resolveUploadSource({ path: args.path, content: args.content });
       let data: Uint8Array;
@@ -584,15 +674,16 @@ export function registerWorkspaceTools(
       } else {
         data = new Uint8Array(Buffer.from(args.content as string, 'base64'));
       }
-      const mimeType = args.mimeType ?? mimeTypeForFilename(args.filename);
+      const mimeType = args.mimeType ?? mimeTypeForFilename(args.filename ?? 'upload.bin');
       const result = await callGoogle(ctx, 'upload Drive file', () =>
         uploadToDrive(ctx.auth, {
           metadata: {
-            name: args.filename,
+            ...(args.filename ? { name: args.filename } : {}),
             ...(args.parentId ? { parents: [args.parentId] } : {}),
           },
           mimeType,
           data,
+          ...(args.fileId ? { fileId: args.fileId } : {}),
         })
       );
       return { account: ctx.alias, email: ctx.email, ...result };

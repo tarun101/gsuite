@@ -5,7 +5,23 @@ import {
   driveSearchQuery, MAX_INLINE_TEXT_BYTES, parseDriveBatchResponse,
   readBoundedText, textExportMimeType,
 } from '../dist/drive-operations.js';
-import { readDriveText } from '../dist/drive-read.js';
+import { authorizedGoogleFetch, readDriveText } from '../dist/drive-read.js';
+
+test('authenticated Drive fetch refuses redirects without forwarding the token', async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (_url, init) => {
+    calls++;
+    assert.equal(init.redirect, 'manual');
+    assert.equal(new Headers(init.headers).get('authorization'), 'Bearer test-token');
+    return new Response(null, { status: 302, headers: { location: 'https://example.test/' } });
+  };
+  try {
+    const ctx = { auth: { getAccessToken: async () => ({ token: 'test-token' }) } };
+    await assert.rejects(authorizedGoogleFetch(ctx, 'https://www.googleapis.com/drive/v3/files/id'), /Google redirect refused/);
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = original; }
+});
 
 test('lean metadata is default and verbose preserves the prior field shape', () => {
   assert.equal(driveMetadataFields(), 'id,name,mimeType,modifiedTime,size,parents');

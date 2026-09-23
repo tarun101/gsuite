@@ -16,7 +16,11 @@ export async function authorizedGoogleFetch(ctx: WorkspaceContext, url: string, 
     if (!token) throw new Error('Could not obtain a Google access token.');
     const headers = new Headers(init.headers);
     headers.set('authorization', `Bearer ${token}`);
-    const response = await fetch(url, { ...init, headers, redirect: 'error' });
+    const response = await fetch(url, { ...init, headers, redirect: 'manual' });
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      throw new Error('Google redirect refused.');
+    }
     if (response.status !== 401 || attempt === 1) return response;
     await response.body?.cancel();
     invalidateRemoteAccessToken(ctx.alias);

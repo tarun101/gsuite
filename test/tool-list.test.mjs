@@ -31,6 +31,9 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
       'sheets_delete_rows',
       'sheets_hide_rows',
       'drive_search_files',
+      'drive_get_file',
+      'drive_get_files',
+      'drive_read_text',
       'drive_list_shared_drives',
       'drive_trash_file',
       'drive_upload_file',
@@ -75,6 +78,12 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
 
     const driveRead = tools.find((tool) => tool.name === 'drive_search_files');
     assert.equal(driveRead.annotations?.readOnlyHint, true);
+    for (const field of ['verbose', 'fields', 'parentId', 'nameContains', 'modifiedAfter', 'orderBy']) {
+      assert.ok(driveRead.inputSchema.properties[field], `search must expose ${field}`);
+    }
+    assert.equal(tools.find((tool) => tool.name === 'drive_get_file').inputSchema.properties.verbose.type, 'boolean');
+    assert.equal(tools.find((tool) => tool.name === 'drive_get_files').inputSchema.properties.fileIds.type, 'array');
+    assert.equal(tools.find((tool) => tool.name === 'drive_read_text').inputSchema.properties.maxBytes.type, 'integer');
 
     const sheetsDeleteRows = tools.find((tool) => tool.name === 'sheets_delete_rows');
     assert.equal(sheetsDeleteRows.annotations?.readOnlyHint, false);
@@ -194,6 +203,8 @@ test('exposes the bounded GSuite tool surface with safety annotations', async ()
     assert.equal(driveUpload.inputSchema.properties.fileId.type, 'string');
     assert.equal(driveUpload.inputSchema.properties.path.type, 'string');
     assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
+    assert.equal(driveUpload.inputSchema.properties.sha256.type, 'string');
+    assert.equal(tools.find((tool) => tool.name === 'drive_download_file').inputSchema.properties.returnContent.type, 'boolean');
 
     assert.equal(tools.find((tool) => tool.name === 'drive_issue_download_ticket'), undefined);
     assert.equal(tools.find((tool) => tool.name === 'drive_issue_upload_ticket'), undefined);
@@ -272,6 +283,9 @@ test('the remote build only advertises tools it can actually run', async () => {
     // "read from disk on the machine running this server" is a lie on Workers.
     assert.equal(driveUpload.inputSchema.properties.path, undefined);
     assert.equal(driveUpload.inputSchema.properties.content.type, 'string');
+    assert.ok(names.has('drive_read_text'));
+    assert.ok(names.has('drive_get_files'));
+    assert.equal(driveUpload.inputSchema.properties.sha256.type, 'string');
     assert.ok(!/local file/.test(driveUpload.description));
 
     const driveTicket = tools.find((tool) => tool.name === 'drive_issue_download_ticket');

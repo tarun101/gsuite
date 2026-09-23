@@ -19,13 +19,14 @@ import {
 import { type DriveUploadTicketRecord } from './drive-upload-ticket.js';
 import { DRIVE_UPLOAD_TICKET_PATH } from './drive-upload-endpoint.js';
 import { DEFAULT_MAX_DRIVE_UPLOAD_BYTES } from './drive-upload-ticket.js';
+import { primeRemoteTokenCache } from './accounts.js';
 
 export { DriveTicketBroker } from './drive-ticket-broker.js';
 
 type Props = { email: string; name: string };
 
 export class GSuiteMCP extends McpAgent<Env, Record<string, never>, Props> {
-  server = new McpServer({ name: 'gsuite', version: '0.6.3' });
+  server = new McpServer({ name: 'gsuite', version: '0.6.4' });
 
   async init(): Promise<void> {
     if (this.props?.email.toLowerCase() !== this.env.ALLOWED_EMAIL.toLowerCase()) {
@@ -34,6 +35,7 @@ export class GSuiteMCP extends McpAgent<Env, Record<string, never>, Props> {
     if (this.env.DRIVE_DOWNLOAD_URL !== ROUTESPRING_DRIVE_DOWNLOAD_URL) {
       throw new Error('Drive download endpoint configuration mismatch.');
     }
+    await primeRemoteTokenCache(this.env.OAUTH_KV, (promise) => this.ctx.waitUntil(promise));
     const configuredTransferLimit = Number((this.env as Env & { DRIVE_TRANSFER_MAX_BYTES?: string }).DRIVE_TRANSFER_MAX_BYTES);
     const transferMaxBytes = Number.isSafeInteger(configuredTransferLimit) && configuredTransferLimit >= DEFAULT_MAX_DRIVE_UPLOAD_BYTES
       ? configuredTransferLimit

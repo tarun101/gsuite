@@ -7,7 +7,7 @@ export const account = z
   .describe('Required account alias or exact email address, for example "personal" or "work".');
 
 const ok = (value: unknown): CallToolResult => ({
-  content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1) }],
+  content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }],
 });
 
 const fail = (error: unknown): CallToolResult => ({

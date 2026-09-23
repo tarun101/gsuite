@@ -10,20 +10,20 @@ A Gmail MCP handles email. `gsuite-mcp` handles the work the email is about:
 
 - **Act, not just retrieve:** send drafts, upload files, change calendars, edit Docs and Sheets,
   manage comments, and work in Chat and Contacts.
-- **Use one Workspace server:** 89 tools cover seven Google services without separate connectors.
+- **Use one Workspace server:** one account-explicit interface covers seven Google services.
 - **Route accounts explicitly:** every service call names the personal or work account to use.
 - **Run locally or remotely:** use stdio for local files and scheduled sends, or an OAuth-protected
   Worker. Large Drive uploads can bypass the model context entirely.
 
 ## What it supports
 
-The current server exposes 89 tools across these services:
+The server exposes tools across these services:
 
 - **Gmail:** search and read threads/messages, work with drafts and attachments, send mail,
   schedule local sends, manage labels, archive, and move messages or threads to recoverable Trash.
 - **Sheets:** read metadata and ranges, update exact ranges, append rows, hide rows, and permanently
   delete rows.
-- **Drive:** search, inspect, download/export, upload, create folders, rename, move, use recoverable
+- **Drive:** search, inspect, batch-read metadata, read small text inline, download/export, upload, create folders, rename, move, use recoverable
   Trash, work with shared drives, inspect activity and changes, and manage comments and replies.
 - **Calendar:** list calendars and events, calculate cross-calendar availability, create or update
   events and recurrence, add Google Meet, RSVP, and delete events.
@@ -35,6 +35,13 @@ The current server exposes 89 tools across these services:
 Every Google service tool requires an `account` alias or exact email address. This prevents a
 client from silently acting through the wrong account. Separate accounts may also use separate
 Google OAuth clients when an organization's policies require it.
+
+Drive search and file metadata use `id,name,mimeType,modifiedTime,size,parents` by default.
+Use `verbose: true` for the previous full metadata shape, or `fields` for a Drive field mask.
+Search defaults to 10 results and supports `parentId`, `nameContains`, `modifiedAfter`, and
+`orderBy`. `drive_read_text` returns UTF-8 blobs and Docs, Sheets, or Slides exports up to
+102400 bytes; larger files use the ticketed download path. Local `drive_download_file` writes to
+`~/Documents/CoWork OS/inbox/` and can also return small text with `returnContent: true`.
 
 The Gmail foundation is based on
 [Vinksj/claude-gmail-multi](https://github.com/Vinksj/claude-gmail-multi) and retains its MIT

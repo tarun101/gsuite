@@ -1,5 +1,5 @@
 import { google, gmail_v1 } from 'googleapis';
-import { getClient, resolveAccount, dropClient } from './accounts.js';
+import { getClient, resolveAccount, dropClient, invalidateRemoteAccessToken } from './accounts.js';
 
 export interface AccountContext {
   alias: string;
@@ -61,6 +61,11 @@ export async function callGmail<T>(
           `${op}: not found in ${ctx.email}. Gmail thread/message IDs are account-specific — ` +
             `was this ID from a different account's search?`
         );
+      }
+      if (status === 401 && attempt === 0) {
+        invalidateRemoteAccessToken(ctx.alias);
+        attempt++;
+        continue;
       }
       if (status === 429 || (status !== undefined && status >= 500)) {
         if (attempt < MAX_RETRIES) {

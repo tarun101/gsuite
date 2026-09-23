@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { isRemote } from './accounts.js';
@@ -16,6 +17,12 @@ import { account, register } from './register.js';
 import { needsRecurrenceTimeZone, normalizeRecurrence, shapeEvent } from './calendar-events.js';
 import { registerDriveDownloadTool, type DriveDownloadToolDependencies } from './drive-download-tool.js';
 import { registerDriveUploadTicketTool, type DriveUploadTicketToolDependencies } from './drive-upload-ticket-tool.js';
+import { authorizedGoogleFetch, readDriveText } from './drive-read.js';
+import {
+  assertInlineUploadSize, buildDriveBatchBody, driveMetadataFields,
+  driveSearchQuery, LEAN_DRIVE_FILE_FIELDS, MAX_INLINE_TEXT_BYTES,
+  parseDriveBatchResponse, textExportMimeType,
+} from './drive-operations.js';
 
 async function callGoogle<T>(
   ctx: WorkspaceContext,
@@ -38,13 +45,6 @@ function documentId(input: string): string {
   if (/^[a-zA-Z0-9_-]{20,}$/.test(input)) return input;
   throw new Error('document must be a Google Docs URL or document ID.');
 }
-
-const DRIVE_AUDIT_FILE_FIELDS =
-  'id,name,mimeType,modifiedTime,modifiedByMeTime,createdTime,viewedByMeTime,sharedWithMeTime,' +
-  'size,trashed,parents,driveId,description,webViewLink,resourceKey,permissionIds,' +
-  'hasAugmentedPermissions,inheritedPermissionsDisabled,' +
-  'owners(displayName,emailAddress,me),lastModifyingUser(displayName,emailAddress,me),' +
-  'capabilities(canComment,canEdit,canShare)';
 
 function documentText(content: any[] | undefined): string {
   const output: string[] = [];
@@ -491,16 +491,22 @@ export function registerWorkspaceTools(
         .describe('Optional shared-drive ID to scope the search to a single shared drive. Omit to search across My Drive plus all shared drives you can access.'),
       pageSize: z.number().int().min(1).max(100).optional(),
       pageToken: z.string().optional(),
+      verbose: z.boolean().optional().describe('Return the full legacy metadata shape. Defaults to false.'),
+      fields: z.string().optional().describe('Optional Drive files.list fields mask override.'),
+      parentId: z.string().optional(),
+      nameContains: z.string().optional(),
+      modifiedAfter: z.string().optional().describe('RFC3339 timestamp.'),
+      orderBy: z.string().optional().describe('Defaults to modifiedTime desc.'),
     },
     async (args) => {
       const ctx = workspaceFor(args.account);
       const result = await callGoogle(ctx, 'search Drive files', () =>
         ctx.drive.files.list({
-          q: args.query ?? 'trashed = false',
-          pageSize: args.pageSize ?? 25,
+          q: driveSearchQuery(args),
+          pageSize: args.pageSize ?? 10,
           pageToken: args.pageToken,
-          orderBy: 'modifiedTime desc',
-          fields: `nextPageToken,files(${DRIVE_AUDIT_FILE_FIELDS})`,
+          orderBy: args.orderBy ?? 'modifiedTime desc',
+          fields: driveMetadataFields(args.verbose, args.fields, true),
           includeItemsFromAllDrives: true,
           supportsAllDrives: true,
           corpora: args.driveId ? 'drive' : 'allDrives',
@@ -521,17 +527,50 @@ export function registerWorkspaceTools(
     server,
     'drive_get_file',
     'Get metadata for one Google Drive file.',
-    { account, fileId: z.string() },
+    {
+      account, fileId: z.string(),
+      verbose: z.boolean().optional().describe('Return the full legacy metadata shape. Defaults to false.'),
+      fields: z.string().optional().describe('Optional Drive files.get fields mask override.'),
+    },
     async (args) => {
       const ctx = workspaceFor(args.account);
       const result = await callGoogle(ctx, 'get Drive file', () =>
         ctx.drive.files.get({
           fileId: args.fileId,
-          fields: DRIVE_AUDIT_FILE_FIELDS,
+          fields: driveMetadataFields(args.verbose, args.fields),
           supportsAllDrives: true,
         })
       );
       return { account: ctx.alias, email: ctx.email, ...result.data };
+    },
+    { readOnlyHint: true }
+  );
+
+  register(
+    server,
+    'drive_read_text',
+    'Read a small UTF-8 Drive text file or export a Google Doc, Sheet, or Slide inline. Maximum 102400 bytes.',
+    { account, fileId: z.string(), maxBytes: z.number().int().min(1).max(MAX_INLINE_TEXT_BYTES).optional() },
+    async (args) => readDriveText(workspaceFor(args.account), args.fileId, args.maxBytes),
+    { readOnlyHint: true }
+  );
+
+  register(
+    server,
+    'drive_get_files',
+    'Get metadata for up to 50 Drive files in one batch, preserving a result or error for every ID.',
+    { account, fileIds: z.array(z.string()).min(1).max(50) },
+    async (args) => {
+      const ctx = workspaceFor(args.account);
+      const { boundary, body } = buildDriveBatchBody(args.fileIds, LEAN_DRIVE_FILE_FIELDS);
+      const response = await authorizedGoogleFetch(ctx, 'https://www.googleapis.com/batch/drive/v3', {
+        method: 'POST',
+        headers: { 'content-type': `multipart/mixed; boundary=${boundary}` },
+        body,
+      });
+      if (!response.ok) throw new Error(`Drive batch metadata request failed with HTTP ${response.status}.`);
+      const files = parseDriveBatchResponse(await response.text(), response.headers.get('content-type') ?? '', args.fileIds);
+      return { account: ctx.alias, email: ctx.email, files };
     },
     { readOnlyHint: true }
   );
@@ -541,13 +580,13 @@ export function registerWorkspaceTools(
     registerDriveUploadTicketTool(server, options.driveUploadTicket);
   }
 
-  // Writes into ~/Downloads, so it only means anything when the server runs on
+  // Writes into the local CoWork inbox, so it only means anything when the server runs on
   // the caller's machine. The remote build does not advertise it at all rather
   // than advertising a tool that always throws.
   if (!isRemote()) register(
     server,
     'drive_download_file',
-    'Download a binary Drive file or export a Google Workspace file to ~/Downloads on the machine running this server (local-only).',
+    'Download a binary Drive file or export a Google Workspace file to ~/Documents/CoWork OS/inbox/ on the machine running this server (local-only).',
     {
       account,
       fileId: z.string(),
@@ -556,11 +595,16 @@ export function registerWorkspaceTools(
         .string()
         .optional()
         .describe('Required for Google Docs/Sheets/Slides, e.g. application/pdf.'),
+      returnContent: z.boolean().optional().describe('Also return UTF-8 text inline when the file is text and at most 102400 bytes.'),
     },
     async (args) => {
       if (isRemote()) throw new Error('drive_download_file is local-only; use Drive export/download from the MCP client.');
       const ctx = workspaceFor(args.account);
-      const response = args.exportMimeType
+      const inline = args.returnContent ? await readDriveText(ctx, args.fileId) : undefined;
+      if (inline && args.exportMimeType && args.exportMimeType !== textExportMimeType(inline.mimeType as string)) {
+        throw new Error('returnContent requires the supported plain-text export MIME type for this file.');
+      }
+      const response = inline ? undefined : args.exportMimeType
         ? await callGoogle(ctx, 'export Drive file', () =>
             ctx.drive.files.export(
               { fileId: args.fileId, mimeType: args.exportMimeType },
@@ -574,13 +618,15 @@ export function registerWorkspaceTools(
             )
           );
       const safe = path.basename(args.filename);
-      let target = path.join(os.homedir(), 'Downloads', safe);
+      const directory = path.join(os.homedir(), 'Documents', 'CoWork OS', 'inbox');
+      fs.mkdirSync(directory, { recursive: true });
+      let target = path.join(directory, safe);
       const parsed = path.parse(target);
       for (let i = 1; fs.existsSync(target); i++) {
         target = path.join(parsed.dir, `${parsed.name}-${i}${parsed.ext}`);
       }
-      fs.writeFileSync(target, Buffer.from(response.data as ArrayBuffer));
-      return { account: ctx.alias, email: ctx.email, fileId: args.fileId, path: target };
+      fs.writeFileSync(target, inline ? Buffer.from(inline.content as string, 'utf8') : Buffer.from(response!.data as ArrayBuffer));
+      return { account: ctx.alias, email: ctx.email, fileId: args.fileId, path: target, ...(inline ?? {}) };
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
   );
@@ -650,6 +696,7 @@ export function registerWorkspaceTools(
             ? 'Base64-encoded file content.'
             : 'Base64-encoded file content. Use this OR path, not both.'
         ),
+      sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/).optional().describe('Optional expected SHA-256 of the uploaded bytes.'),
       mimeType: z
         .string()
         .optional()
@@ -672,7 +719,12 @@ export function registerWorkspaceTools(
         }
         data = new Uint8Array(fs.readFileSync(filePath));
       } else {
+        assertInlineUploadSize(args.content as string);
         data = new Uint8Array(Buffer.from(args.content as string, 'base64'));
+        assertInlineUploadSize(args.content as string, data.byteLength);
+      }
+      if (args.sha256 && createHash('sha256').update(data).digest('hex') !== args.sha256.toLowerCase()) {
+        throw new Error('Uploaded bytes do not match the supplied SHA-256.');
       }
       const mimeType = args.mimeType ?? mimeTypeForFilename(args.filename ?? 'upload.bin');
       const result = await callGoogle(ctx, 'upload Drive file', () =>

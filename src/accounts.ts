@@ -119,10 +119,54 @@ export function writeToken(entry: AccountEntry, token: StoredToken): void {
 }
 
 const clientCache = new Map<string, OAuth2Client>();
+type CachedAccessToken = { accessToken: string; expiryDate: number };
+type AccessTokenStore = {
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string, options: { expirationTtl: number }): Promise<void>;
+  delete(key: string): Promise<void>;
+};
+const remoteTokens = new Map<string, CachedAccessToken>();
+const primedAliases = new Set<string>();
+let remoteTokenStore: AccessTokenStore | undefined;
+let remoteWaitUntil: ((promise: Promise<unknown>) => void) | undefined;
+const cacheKey = (alias: string) => `google-access-token:${alias}`;
+const tokenIsFresh = (token: CachedAccessToken, now = Date.now()) => token.expiryDate > now + 60_000;
+
+/** Load only access tokens, never refresh tokens, from KV on a cold Worker instance. */
+export async function primeRemoteTokenCache(store: AccessTokenStore, waitUntil?: (promise: Promise<unknown>) => void): Promise<void> {
+  remoteTokenStore = store;
+  remoteWaitUntil = waitUntil;
+  await Promise.all(['personal', 'work'].map(async (alias) => {
+    if (primedAliases.has(alias)) return;
+    primedAliases.add(alias);
+    try {
+      const value = await store.get(cacheKey(alias));
+      if (!value) return;
+      const token = JSON.parse(value) as CachedAccessToken;
+      if (!token.accessToken || !tokenIsFresh(token)) return;
+      remoteTokens.set(alias, token);
+      const client = clientCache.get(alias);
+      if (client) client.setCredentials({ ...client.credentials, access_token: token.accessToken, expiry_date: token.expiryDate });
+    } catch {
+      // KV is an acceleration layer; Google refresh remains the fallback.
+    }
+  }));
+}
+
+export function invalidateRemoteAccessToken(alias: string): void {
+  if (!isRemote()) return;
+  remoteTokens.delete(alias);
+  const client = clientCache.get(alias);
+  if (client) client.setCredentials({ ...client.credentials, access_token: undefined, expiry_date: 0 });
+  if (remoteTokenStore) {
+    const deletion = remoteTokenStore.delete(cacheKey(alias)).catch(() => undefined);
+    if (remoteWaitUntil) remoteWaitUntil(deletion);
+  }
+}
 
 export function getClient(alias: string, entry: AccountEntry): OAuth2Client {
   const remote = isRemote();
-  const cached = remote ? undefined : clientCache.get(alias);
+  const cached = clientCache.get(alias);
   if (cached) return cached;
 
   const creds = loadClientCredentials(entry);
@@ -133,9 +177,12 @@ export function getClient(alias: string, entry: AccountEntry): OAuth2Client {
         `Run: npm run auth -- --alias ${alias}`
     );
   }
+  const remoteAccess = remoteTokens.get(alias);
   const stored = remote
     ? {
         refresh_token: process.env[envName(alias, 'REFRESH_TOKEN')] ?? '',
+        access_token: remoteAccess && tokenIsFresh(remoteAccess) ? remoteAccess.accessToken : undefined,
+        expiry_date: remoteAccess && tokenIsFresh(remoteAccess) ? remoteAccess.expiryDate : undefined,
         email: entry.email,
       }
     : (JSON.parse(fs.readFileSync(file, 'utf8')) as StoredToken);
@@ -159,10 +206,22 @@ export function getClient(alias: string, entry: AccountEntry): OAuth2Client {
     }
   });
 
-  if (!remote) clientCache.set(alias, client);
+  if (remote) client.on('tokens', (tokens) => {
+    if (!tokens.access_token || !tokens.expiry_date) return;
+    const token = { accessToken: tokens.access_token, expiryDate: tokens.expiry_date };
+    remoteTokens.set(alias, token);
+    const ttl = Math.floor((token.expiryDate - Date.now()) / 1000);
+    if (remoteTokenStore && ttl >= 120) {
+      const write = remoteTokenStore.put(cacheKey(alias), JSON.stringify(token), { expirationTtl: ttl }).catch(() => undefined);
+      if (remoteWaitUntil) remoteWaitUntil(write);
+    }
+  });
+
+  clientCache.set(alias, client);
   return client;
 }
 
 export function dropClient(alias: string): void {
   clientCache.delete(alias);
+  if (isRemote()) invalidateRemoteAccessToken(alias);
 }

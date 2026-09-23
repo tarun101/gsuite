@@ -4,6 +4,7 @@ import { handleUploadRequest } from './upload-endpoint.js';
 import { handleDriveUploadTicketRequest } from './drive-upload-endpoint.js';
 import { handleCloudDownloadRequest } from './cloud-download-endpoint.js';
 import { handleDriveDownloadRequest } from './drive-download-endpoint.js';
+import { primeRemoteTokenCache } from './accounts.js';
 
 type AccessEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
 type StoredState = { request: AuthRequest; verifier: string };
@@ -108,9 +109,12 @@ async function verifyAccessIdToken(env: AccessEnv, token: string): Promise<{ ema
   return { email: claims.email, name: claims.name, sub: claims.sub };
 }
 
-export async function handleAccessRequest(request: Request, env: AccessEnv): Promise<Response> {
+export async function handleAccessRequest(request: Request, env: AccessEnv, ctx?: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   try {
+    if (['/drive/download', '/cloud/download', '/drive/upload'].includes(url.pathname)) {
+      await primeRemoteTokenCache(env.OAUTH_KV, ctx ? (promise) => ctx.waitUntil(promise) : undefined);
+    }
     const ticketUpload = await handleDriveUploadTicketRequest(request, env);
     if (ticketUpload) return ticketUpload;
     const cloudDownload = await handleCloudDownloadRequest(request, env);

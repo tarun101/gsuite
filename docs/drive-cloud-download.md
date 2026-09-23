@@ -14,12 +14,14 @@ Call `drive_issue_download_ticket` through the authenticated remote MCP with:
 
 - `account`: explicit alias or exact email address.
 - `fileId`: exact Drive identifier; URLs are rejected.
-- `expectedSha256`: trusted 64-character SHA-256 for the exact blob.
+- `expectedSha256` (optional): a trusted SHA-256 when the caller already knows the exact file content.
 
 The tool verifies current download and revision-read capabilities, effective download restrictions,
 MIME allowlist, positive size up to 20 MiB, `headRevisionId`, and Drive's `sha256Checksum`. It
 returns the expected filename, MIME type, byte size, head revision, SHA-256, endpoint, expiry, and
 opaque bearer ticket.
+The allowlist includes `text/markdown`. If `expectedSha256` is supplied, issuance also checks it
+against Drive metadata.
 
 Redeem once with `GET /drive/download` and `Authorization: Bearer <ticket>`. The endpoint accepts no
 query parameters. It atomically consumes the hashed ticket before any Google request, rechecks the
@@ -27,9 +29,9 @@ account, permission, restrictions, metadata, head revision, size, and SHA-256, r
 then streams the fixed Drive `revisions.get?alt=media` response for that exact head revision with
 backpressure and a 30-second limit.
 
-The head revision and SHA-256, not `modifiedTime`, bind the authorized content version. The
-downloader independently hashes the delivered stream and does not rename the private partial file
-to its final name until both exact size and trusted SHA-256 match.
+The head revision and Drive-provided SHA-256 bind the authorized content version. The downloader
+independently hashes the delivered stream and does not rename the private partial file to its final
+name until both exact size and Drive-provided SHA-256 match.
 
 ## Downloader
 

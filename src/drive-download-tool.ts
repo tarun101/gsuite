@@ -56,7 +56,8 @@ export function registerDriveDownloadTool(
       expectedSha256: z
         .string()
         .regex(/^[A-Fa-f0-9]{64}$/, 'expectedSha256 must be 64 hexadecimal characters.')
-        .describe('Trusted SHA-256 for the exact ordinary uploaded file.'),
+        .optional()
+        .describe('Optional trusted SHA-256 for the exact file. Drive SHA-256 is always verified.'),
     },
     async (args) => {
       if (!dependencies) throw new Error('The remote download ticket broker is unavailable.');

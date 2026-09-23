@@ -19,6 +19,7 @@ export const ALLOWED_DRIVE_DOWNLOAD_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
   'text/csv',
+  'text/markdown',
   'text/plain',
 ]);
 
@@ -143,13 +144,14 @@ export function assertMetadataStillMatches(
   current: DriveDownloadMetadata,
   ticket: DriveDownloadTicketRecord,
 ): void {
-  const normalized = normalizeDownloadMetadata(current, ticket.sha256);
+  const normalized = normalizeDownloadMetadata(current);
   const exact: Array<[string, unknown, unknown]> = [
     ['file ID', normalized.fileId, ticket.fileId],
     ['filename', normalized.filename, ticket.filename],
     ['MIME type', normalized.mimeType, ticket.mimeType],
     ['byte size', normalized.byteSize, ticket.byteSize],
     ['head revision', normalized.headRevisionId, ticket.headRevisionId],
+    ['SHA-256', normalized.sha256, ticket.sha256],
     ['modified time', normalized.modifiedTime, ticket.modifiedTime],
   ];
   const changed = exact.find(([, left, right]) => left !== right);

@@ -252,7 +252,7 @@ test('the remote build only advertises tools it can actually run', async () => {
     assert.equal(driveTicket.annotations?.readOnlyHint, false);
     assert.ok(driveTicket.inputSchema.required.includes('account'));
     assert.ok(driveTicket.inputSchema.required.includes('fileId'));
-    assert.ok(driveTicket.inputSchema.required.includes('expectedSha256'));
+    assert.ok(!driveTicket.inputSchema.required.includes('expectedSha256'));
     assert.equal(driveTicket.inputSchema.properties.expectedSha256.pattern, '^[A-Fa-f0-9]{64}$');
   } finally {
     await client.close();

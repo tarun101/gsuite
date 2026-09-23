@@ -29,7 +29,7 @@ const metadata = (overrides = {}) => ({
 });
 
 const record = () => ({
-  ...normalizeDownloadMetadata(metadata(), SHA),
+  ...normalizeDownloadMetadata(metadata()),
   transferId: 'transfer-1',
   operation: 'drive.download',
   requester: 'i@tarun.me',
@@ -51,14 +51,17 @@ test('opaque tickets are 256 random bits, shard deterministically, and hash befo
   assert.notEqual(firstHash, first);
 });
 
-test('ordinary blob metadata requires trusted SHA-256, download permission, allowlisted MIME, and bounded size', () => {
-  assert.equal(normalizeDownloadMetadata(metadata(), SHA).byteSize, 12);
+test('ordinary blob metadata requires Drive SHA-256, download permission, allowlisted MIME, and bounded size', () => {
+  assert.equal(normalizeDownloadMetadata(metadata()).byteSize, 12);
+  assert.equal(normalizeDownloadMetadata(metadata(), SHA).sha256, SHA);
   assert.throws(() => normalizeDownloadMetadata(metadata(), 'b'.repeat(64)), /trusted expected SHA-256/);
-  assert.throws(() => normalizeDownloadMetadata(metadata({ capabilities: { canDownload: false } }), SHA), /not currently permitted/);
-  assert.throws(() => normalizeDownloadMetadata(metadata({ capabilities: { canDownload: true, canReadRevisions: false } }), SHA), /not currently permitted/);
-  assert.throws(() => normalizeDownloadMetadata(metadata({ downloadRestrictions: { effectiveDownloadRestrictionWithContext: { restrictedForReaders: true } } }), SHA), /not currently permitted/);
-  assert.throws(() => normalizeDownloadMetadata(metadata({ mimeType: 'application/x-unknown' }), SHA), /MIME type is not allowed/);
-  assert.throws(() => normalizeDownloadMetadata(metadata({ size: String(MAX_DRIVE_DOWNLOAD_BYTES + 1) }), SHA), /cloud download limit/);
+  assert.throws(() => normalizeDownloadMetadata(metadata({ sha256Checksum: null })), /SHA-256 checksum/);
+  assert.throws(() => normalizeDownloadMetadata(metadata({ capabilities: { canDownload: false } })), /not currently permitted/);
+  assert.throws(() => normalizeDownloadMetadata(metadata({ capabilities: { canDownload: true, canReadRevisions: false } })), /not currently permitted/);
+  assert.throws(() => normalizeDownloadMetadata(metadata({ downloadRestrictions: { effectiveDownloadRestrictionWithContext: { restrictedForReaders: true } } })), /not currently permitted/);
+  assert.throws(() => normalizeDownloadMetadata(metadata({ mimeType: 'application/x-unknown' })), /MIME type is not allowed/);
+  assert.throws(() => normalizeDownloadMetadata(metadata({ size: String(MAX_DRIVE_DOWNLOAD_BYTES + 1) })), /cloud download limit/);
+  assert.equal(normalizeDownloadMetadata(metadata({ mimeType: 'text/markdown' })).mimeType, 'text/markdown');
 });
 
 test('Google-native files are explicitly rejected', () => {
@@ -66,7 +69,7 @@ test('Google-native files are explicitly rejected', () => {
     'application/vnd.google-apps.document',
     'application/vnd.google-apps.spreadsheet',
     'application/vnd.google-apps.presentation',
-  ]) assert.throws(() => normalizeDownloadMetadata(metadata({ mimeType }), SHA), /Google-native/);
+  ]) assert.throws(() => normalizeDownloadMetadata(metadata({ mimeType })), /Google-native/);
 });
 
 test('MCP ticket output contains metadata and ticket, never file content or base64', () => {
@@ -83,6 +86,6 @@ test('redemption metadata recheck detects account-independent file and content t
   assert.doesNotThrow(() => assertMetadataStillMatches(metadata(), expected));
   assert.throws(() => assertMetadataStillMatches(metadata({ id: 'another-file-id' }), expected), /file ID mismatch/);
   assert.throws(() => assertMetadataStillMatches(metadata({ headRevisionId: 'rev-124' }), expected), /head revision mismatch/);
-  assert.throws(() => assertMetadataStillMatches(metadata({ sha256Checksum: 'b'.repeat(64) }), expected), /trusted expected SHA-256/);
+  assert.throws(() => assertMetadataStillMatches(metadata({ sha256Checksum: 'b'.repeat(64) }), expected), /SHA-256 mismatch/);
   assert.throws(() => assertMetadataStillMatches(metadata({ size: '13' }), expected), /byte size mismatch/);
 });

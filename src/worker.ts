@@ -21,7 +21,7 @@ export { DriveTicketBroker } from './drive-ticket-broker.js';
 type Props = { email: string; name: string };
 
 export class GSuiteMCP extends McpAgent<Env, Record<string, never>, Props> {
-  server = new McpServer({ name: 'gsuite', version: '0.6.1' });
+  server = new McpServer({ name: 'gsuite', version: '0.6.3' });
 
   async init(): Promise<void> {
     if (this.props?.email.toLowerCase() !== this.env.ALLOWED_EMAIL.toLowerCase()) {
